@@ -15,11 +15,16 @@ import https from "node:https";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-/* 本地默认只绑 127.0.0.1，避免暴露到局域网。
-   云端部署必须设 COZE_PROXY_HOST=0.0.0.0，否则平台的反向代理连不进来。 */
+/* 代理只监听回环地址即可：在 start:all 组合模式下，是 Next 通过 rewrite 在
+   容器内部转发给它，公网入口始终是 Next 那一侧。保持 127.0.0.1 反而更安全
+   ——代理本身带你的 PAT 且无鉴权，不该直接暴露到网卡。
+   仅当代理与 Next 分处不同容器/主机时，才需要设 COZE_PROXY_HOST=0.0.0.0。 */
 const HOST = process.env.COZE_PROXY_HOST ?? "127.0.0.1";
-/* 云端平台通常用 PORT 注入端口；本地仍可用 COZE_PROXY_PORT 显式覆盖。 */
-const PORT = Number(process.env.COZE_PROXY_PORT ?? process.env.PORT ?? 8787);
+/* 刻意不读 process.env.PORT！
+   平台注入的 PORT 属于对外服务进程（next start）。代理若也读它，两者会抢同一端口，
+   后起的那个直接 EADDRINUSE。内部端口固定 8787，需要改时显式设 COZE_PROXY_PORT，
+   并同步设置 next.config.ts 的 COZE_PROXY_ORIGIN。 */
+const PORT = Number(process.env.COZE_PROXY_PORT ?? 8787);
 const COZE_HOST = "api.coze.cn";
 const POLL_INTERVAL_MS = 800;
 /* 25s 而非 60s：云端函数型托管常在 30-60s 掐断长请求，超时后前端只能拿到 502。

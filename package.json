@@ -8,6 +8,7 @@
     "start": "next start -p 8899",
     "export:single": "node scripts/export-single-html.mjs",
     "proxy": "node scripts/coze-proxy.mjs",
+    "start:all": "concurrently -k -n proxy,next -c cyan,green \"node scripts/coze-proxy.mjs\" \"next start\"",
     "qa:cases": "node scripts/build-case-library.mjs",
     "qa:index": "node scripts/build-question-index.mjs"
   },
@@ -21,6 +22,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "concurrently": "^10.0.6",
     "tailwindcss": "4.3.3",
     "typescript": "^5.9.0"
   },
