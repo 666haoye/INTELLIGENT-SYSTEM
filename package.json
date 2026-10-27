@@ -1,0 +1,30 @@
+{
+  "name": "zhijiao-home",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --webpack -p 8899",
+    "build": "next build --webpack",
+    "start": "next start -p 8899",
+    "export:single": "node scripts/export-single-html.mjs",
+    "proxy": "node scripts/coze-proxy.mjs",
+    "qa:cases": "node scripts/build-case-library.mjs",
+    "qa:index": "node scripts/build-question-index.mjs"
+  },
+  "dependencies": {
+    "next": "16.4.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}

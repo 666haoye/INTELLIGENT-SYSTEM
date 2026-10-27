@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>调试壳 · 实验沙盒</title>
+<link rel="stylesheet" href="lab.css" />
+<script>
+/* 开发用调试壳：在任何实验脚本之前装错误陷阱（导出时按 _ 前缀过滤，不随包分发） */
+window.__err = [];
+window.addEventListener("error", function (e) {
+  window.__err.push(String((e.error && e.error.stack) || e.message));
+});
+window.addEventListener("unhandledrejection", function (e) {
+  window.__err.push("unhandledrejection: " + String(e.reason && e.reason.stack || e.reason));
+});
+</script>
+</head>
+<body>
+<div id="app"></div>
+<script>
+(function () {
+  var m = location.search.match(/[?&]exp=([A-Za-z0-9]+)/);
+  document.getElementById("app").setAttribute("data-exp", m ? m[1] : "");
+})();
+</script>
+<script src="lab.js"></script>
+<script src="exp-e04.js"></script>
+<script src="exp-e08.js"></script>
+<script src="exp-e11.js"></script>
+<script src="exp-e12.js"></script>
+<script src="exp-e13.js"></script>
+<script src="exp-e21.js"></script>
+<script src="exp-e22.js"></script>
+<script src="exp-e27.js"></script>
+<script src="exp-e32.js"></script>
+<script src="exp-e33.js"></script>
+<script>
+try {
+  LAB.boot();
+} catch (e) {
+  window.__err.push("boot: " + String((e && e.stack) || e));
+}
+</script>
+</body>
+</html>

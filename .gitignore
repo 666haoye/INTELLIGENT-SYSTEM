@@ -1,0 +1,34 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+next-env.d.ts
+
+# misc
+.DS_Store
+*.log
+.env*
+# 示例文件必须入库，否则会被上面的 .env* 一起吞掉
+!.env.example
+
+# 生成物：npm run export:single 的产物，改源码后重新生成，不入版本库
+/experiments/
+智教系统首页.html
+
+# 本地运维日志与参赛打包产物
+logs/
+比赛提交_打包/
+*.zip
+
+# ── 不入库：课程源材料与本机运维文件 ──
+# 教材提取的原始笔记（运行时不读，仅供 qa:index / qa:cases 生成用）
+资料库/
+# 内部交接文档：含访问密码、门锁缺陷说明与实现细节
+PROJECT_CONTEXT.md
+# 本机运维脚本：含 C:\Users\... 绝对路径
+start-dev.bat
+install-autostart.bat
+scripts/autostart-launch.vbs
+
