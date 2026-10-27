@@ -20,7 +20,8 @@ export class CozeError extends Error {
   }
 }
 
-/* 比代理内部 60s 轮询留余量。实测一轮约 15-17 秒。 */
+/* 外层兜底超时。代理内部轮询上限是 25 秒，正常情况先由代理返回明确的超时错误；
+   这里的 90 秒只用于兜住「代理进程本身无响应」这种卡死场景。 */
 const REQUEST_TIMEOUT_MS = 90_000;
 
 type ProxyPayload = {

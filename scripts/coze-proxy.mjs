@@ -225,7 +225,7 @@ async function runChat(text, conversationId) {
 
   while (status !== "completed" && status !== "failed") {
     if (Date.now() > deadline) {
-      return fail("timeout", "AI 响应超时（60 秒），请重试或把问题问短一点");
+      return fail("timeout", "AI 响应超时（25 秒），请重试或把问题问短一点");
     }
     await sleep(POLL_INTERVAL_MS);
     const polled = await cozeRequest("GET", "/v3/chat/retrieve" + query);

@@ -5,6 +5,8 @@ node_modules/
 .next/
 out/
 next-env.d.ts
+# tsc --noEmit 在 incremental 模式下生成的缓存，不是源码
+*.tsbuildinfo
 
 # misc
 .DS_Store
