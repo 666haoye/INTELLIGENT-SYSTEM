@@ -10,10 +10,20 @@ import type { NextConfig } from "next";
  */
 const PROXY_ORIGIN = process.env.COZE_PROXY_ORIGIN ?? "http://127.0.0.1:8787";
 
+/* rewrite 转发的存活时长，必须严格大于代理自身的轮询上限（coze-proxy.mjs 的
+ * POLL_TIMEOUT_MS = 35 秒）。Next 给 rewrite 转发设的默认超时是 30 秒
+ * （next/dist/server/lib/router-utils/proxy-request.js 里的 `proxyTimeout || 30_000`），
+ * 到点它直接 res.end("Internal Server Error") 并吞掉上游响应——表现为 500，
+ * 用户看不到代理那句可读的「AI 响应超时」文案，只拿到一个空壳错误页。 */
+const REWRITE_TIMEOUT_MS = 40_000;
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: ["127.0.0.1", "localhost"],
   devIndicators: false,
+  experimental: {
+    proxyTimeout: REWRITE_TIMEOUT_MS,
+  },
   /* 云端同域部署：前端请求相对路径 /chat，由 Next 转发给代理进程。
      只在 npm run dev / npm start 的服务模式下生效；export:single 会临时替换整个
      配置文件，所以静态导出版不受影响。 */

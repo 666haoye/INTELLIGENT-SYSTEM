@@ -27,9 +27,11 @@ const HOST = process.env.COZE_PROXY_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.COZE_PROXY_PORT ?? 8787);
 const COZE_HOST = "api.coze.cn";
 const POLL_INTERVAL_MS = 800;
-/* 25s 而非 60s：云端函数型托管常在 30-60s 掐断长请求，超时后前端只能拿到 502。
-   实测正常回答约 15-17s，这里留约 1.5 倍余量。 */
-const POLL_TIMEOUT_MS = 25_000;
+/* 35s：实测正常回答 15-17s，偶发长答会顶到 24s，25s 的余量太薄。
+   这个数字的前提是云端跑的是常驻进程（npm run start:all）。若平台的网关/流量层
+   有 30 秒硬超时，那到点掐断的是网关而不是这里，调大 POLL_TIMEOUT_MS 并不会
+   让请求活得更久——前端拿到的仍是 502，只是错误信息由网关而不是代理给出。 */
+const POLL_TIMEOUT_MS = 35_000;
 const MAX_TEXT_LENGTH = 4000;
 
 /* 内置 .env 解析：不用 node --env-file（文件缺失时硬失败），
@@ -230,7 +232,7 @@ async function runChat(text, conversationId) {
 
   while (status !== "completed" && status !== "failed") {
     if (Date.now() > deadline) {
-      return fail("timeout", "AI 响应超时（25 秒），请重试或把问题问短一点");
+      return fail("timeout", "AI 响应超时（35 秒），请重试或把问题问短一点");
     }
     await sleep(POLL_INTERVAL_MS);
     const polled = await cozeRequest("GET", "/v3/chat/retrieve" + query);
