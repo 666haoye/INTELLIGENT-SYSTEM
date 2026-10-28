@@ -322,6 +322,16 @@ select:focus-visible {
   transition: transform calc(320ms * var(--tempo)) var(--ease-out);
 }
 
+/* 命中区跟着 3D 的环一起放大：环外径 40 设计像素，而 --node-size 只有 0.8 倍多一点，
+   按钮本体比画面上的环还小，鼠标"指着环却没进节点"就会让人觉得点不着。
+   ::after 只是把透明的按钮热区外扩 20%（直径 ≈1.4×），视觉上一个像素都不动。 */
+.wing-node::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  border-radius: 50%;
+}
+
 .wing-node:hover,
 .wing-node:focus-visible {
   transform: translate(-50%, -50%) scale(1.07);

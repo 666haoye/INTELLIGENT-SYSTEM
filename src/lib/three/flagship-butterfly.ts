@@ -1,7 +1,8 @@
 /* 旗舰档：在已验证的节能档线框蝴蝶之上，叠出真正的立体结构。
  *
  * 做法是「组合」而不是「另写一套」：先拿 buildEcoButterfly() 的完整场景，
- * 再往每个翼 pivot 里塞翼膜与三层 Tube 脉络，替换能量核，加穹顶与节点 3D 环。
+ * 再往每个翼 pivot 里塞翼膜与三层 Tube 脉络，替换能量核，加穹顶。
+ * 节点环两档共用，不在这里建（见 node-rings.ts）。
  * 这样线框细节（28 条细脉、虚线 cell、sparks）一行都不用重写，
  * 两档共用同一份几何数据，不会出现「改了旗舰档、节能档悄悄坏掉」的分叉。
  */
@@ -10,8 +11,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 
 import { buildEcoButterfly, WING_SPEC, type ButterflyParts, type WingQuadrant } from "./butterfly-scene";
 import { CORE, cubicSegments, parsePath, type Pt } from "./wing-geometry";
-import { MODULE_NODES } from "../nodes";
-import { fractionToDesignPx, toWorld, toWorldSize } from "./design-space";
+import { toWorldSize } from "./design-space";
 import { createDomeGrid } from "./glow-texture";
 
 /** 主脉三层排布：前后各 14 设计像素，中间层略微缩小制造视差 */
@@ -175,48 +175,6 @@ function addMembraneAndTubes(parts: ButterflyParts) {
   }
 }
 
-/** 节点 3D 环：外环平铺 + 内环倾斜，hover 时由 animator 提亮 */
-function addNodeRings(parts: ButterflyParts) {
-  for (const node of MODULE_NODES) {
-    const [px, py] = fractionToDesignPx(node.x, node.y);
-    const holder = new THREE.Group();
-    holder.position.set(...toWorld(px, py));
-
-    const outerGeometry = new THREE.TorusGeometry(toWorldSize(46), toWorldSize(1.1), 6, 56);
-    const innerGeometry = new THREE.TorusGeometry(toWorldSize(30), toWorldSize(1.6), 6, 40);
-    parts.disposables.push(outerGeometry, innerGeometry);
-
-    const outerMaterial = new THREE.MeshStandardMaterial({
-      color: "#7dd3fc",
-      emissive: "#38bdf8",
-      emissiveIntensity: 0.8,
-      metalness: 0.2,
-      roughness: 0.4,
-      transparent: true,
-      opacity: 0.55,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    const innerMaterial = outerMaterial.clone();
-    innerMaterial.opacity = 0.75;
-    innerMaterial.emissiveIntensity = 1.1;
-    parts.disposables.push(outerMaterial, innerMaterial);
-
-    const outer = new THREE.Mesh(outerGeometry, outerMaterial);
-    const inner = new THREE.Mesh(innerGeometry, innerMaterial);
-    inner.rotation.x = Math.PI / 2.6;
-    inner.rotation.y = Math.PI / 5;
-    outer.renderOrder = 3;
-    inner.renderOrder = 3;
-    holder.add(outer, inner);
-
-    parts.brightness.push({ side: node.side, layer: "socket", material: outerMaterial, base: 0.55 });
-    parts.brightness.push({ side: node.side, layer: "socket", material: innerMaterial, base: 0.75 });
-    parts.nodeRings.push(holder);
-    parts.root.add(mark(holder));
-  }
-}
-
 /** 能量核重构：发光球体 + 三层不同轴向的 Torus，替换掉原来的 sprite orb */
 function rebuildCore(parts: ButterflyParts) {
   for (const child of parts.corePulse.children) {
@@ -299,7 +257,6 @@ export function buildFlagshipButterfly(resolution: THREE.Vector2): FlagshipBuild
   parts.mode = "flagship";
 
   addMembraneAndTubes(parts);
-  addNodeRings(parts);
   rebuildCore(parts);
   addDome(parts);
 

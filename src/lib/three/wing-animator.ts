@@ -69,8 +69,6 @@ const CONDUCT_FRAMES: Record<"wingGlow" | "veinGlow" | "veinBright", Array<[numb
 const HOVER_LIFT: Partial<Record<BrightnessLayer, number>> = {
   wingGlow: 1 / 0.9,
   wingLine: 1 / 0.96,
-  /* 节点视觉已归 3D，hover 提亮是它唯一的反馈入口 */
-  socket: 1.5,
 };
 
 /** 扇动时脉络亮度联动（方案 §4.2：舒展变亮、收拢变暗） */

@@ -1,4 +1,5 @@
-/* Three.js 场景构建：四翼线框 + 躯干 + 中心能量核 + 节点插座 + 翅上光流包。
+/* Three.js 场景构建：四翼线框 + 躯干 + 中心能量核 + 翅上光流包。
+ * 节点环单独在 node-rings.ts 里建，两档共用。
  *
  * 视觉规格逐条对旧的 globals.css 与 Butterfly.tsx 取值，目标是「静止一帧与改造前的 SVG 等价」，
  * 动画由 wing-animator.ts 接管。
@@ -22,7 +23,6 @@ import {
   CENTER_X,
   DESIGN_W,
   PX_PER_UNIT,
-  fractionToDesignPx,
   toWorld,
   toWorldSize,
 } from "./design-space";
@@ -50,7 +50,6 @@ import {
   HIND_MAIN,
   HIND_SPARKS,
   INNER_SHAPES,
-  SOCKET,
   type Pt,
   type Polyline,
   circlePoly,
@@ -61,12 +60,12 @@ import {
   polylinePairs,
   scaleAbout,
 } from "./wing-geometry";
-import { MODULE_NODES, type WingSide } from "../nodes";
+import type { WingSide } from "../nodes";
 import type { RenderTier } from "../environment";
 import { createBeam, createCoreGlow, createCoreOrb, createFlowDot } from "./glow-texture";
 
 /** @types/three 0.186 没有声明 linewidth，但运行时 LineMaterial 确实有这个 getter/setter */
-type FatMaterial = LineMaterial & { linewidth: number };
+export type FatMaterial = LineMaterial & { linewidth: number };
 
 /** 亮度分组：animator 按 (side, layer) 查表调 opacity */
 export type BrightnessLayer =
@@ -75,8 +74,7 @@ export type BrightnessLayer =
   | "veinGlow"
   | "veinBright"
   | "core"
-  | "body"
-  | "socket";
+  | "body";
 
 export type BrightnessTarget = {
   side: WingSide | null;
@@ -112,10 +110,9 @@ export type ButterflyParts = {
   brightness: BrightnessTarget[];
   disposables: Array<{ dispose(): void }>;
   lineMaterials: FatMaterial[];
-  /** 旗舰档专属：穹顶、三轴能量环、节点 3D 环，节能档为 null */
+  /** 旗舰档专属：穹顶、三轴能量环，节能档为 null / 空 */
   dome: THREE.Object3D | null;
   coreRings: THREE.Object3D[];
-  nodeRings: THREE.Object3D[];
 };
 
 /* ==========================================================
@@ -712,33 +709,6 @@ function buildCore(resolution: THREE.Vector2, parts: ButterflyParts) {
 }
 
 /* ==========================================================
-   节点插座（贴着 DOM 节点，不参与扇动）
-   ========================================================== */
-
-function buildSockets(resolution: THREE.Vector2, parts: ButterflyParts): THREE.Group {
-  const group = new THREE.Group();
-
-  for (const node of MODULE_NODES) {
-    const [px, py] = fractionToDesignPx(node.x, node.y);
-    const [cx, cy] = toWorld(px, py);
-    const holder = new THREE.Group();
-    holder.position.set(cx, cy, 0);
-
-    const add = (positions: number[], opacity: number) => {
-      const material = register(parts, makeFatMaterial(0.8, "#7dd3fc", opacity, resolution), node.side, "socket", opacity);
-      holder.add(fatSegments(positions, material, parts));
-    };
-
-    add(localPairs(dashPairs([circlePoly(0, 0, SOCKET.outerR)], 1.5, 6.5), [0, 0]), 0.4 * 0.85);
-    add(localPairs(dashPairs([circlePoly(0, 0, SOCKET.ringR)], 1.5, 6.5), [0, 0]), 0.4);
-    add(localPolys(parsePath(SOCKET.cross), [0, 0]), 0.4);
-    group.add(holder);
-  }
-
-  return group;
-}
-
-/* ==========================================================
    对外入口
    ========================================================== */
 
@@ -760,7 +730,6 @@ export function buildEcoButterfly(resolution: THREE.Vector2): ButterflyParts {
     lineMaterials: [],
     dome: null,
     coreRings: [],
-    nodeRings: [],
   };
 
   parts.wings = {
@@ -784,8 +753,6 @@ export function buildEcoButterfly(resolution: THREE.Vector2): ButterflyParts {
   parts.coreAura = core.aura;
   parts.coreOuterRing = core.outerRing;
   root.add(core.root);
-
-  root.add(buildSockets(resolution, parts));
 
   return parts;
 }

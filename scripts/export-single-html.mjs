@@ -152,10 +152,12 @@ function run() {
   /* 飞行数据（self.__next_f）里仍保留 CSS 路径：水合后 React 会按 :HL/link 载荷
      重新插入 <link> 并发起请求，文件不存在 → 404 → unhandledrejection。
      把这些字符串换成 data: 空样式表（base64 避免引号/花括号破坏飞行字符串），
-     即便被重新插入也是即时加载、零网络请求。 */
-  const flightCss = html.match(/_next\/static\/css\/[A-Za-z0-9._-]+\.css/g) || [];
+     即便被重新插入也是即时加载、零网络请求。
+     前导斜杠必须一起吃掉：飞行数据里存的是 "/_next/..."，只换后半段会得到
+     "/data:text/css;…" —— 浏览器把它当相对路径解析，file:// 下就是 ERR_FILE_NOT_FOUND。 */
+  const flightCss = html.match(/\/?_next\/static\/css\/[A-Za-z0-9._-]+\.css/g) || [];
   const emptySheet = "data:text/css;base64," + Buffer.from(":root{}").toString("base64");
-  html = html.replace(/_next\/static\/css\/[A-Za-z0-9._-]+\.css/g, emptySheet);
+  html = html.replace(/\/?_next\/static\/css\/[A-Za-z0-9._-]+\.css/g, emptySheet);
   console.log("[export] 飞行数据 CSS 引用重写：" + flightCss.length + " 处" + (flightCss.length ? "（" + flightCss[0] + "）" : ""));
 
   /* 残留检查：不允许还有指向 _next/ 的真实 src/href 引用（data-src 合成地址与 flight 字符串无害） */

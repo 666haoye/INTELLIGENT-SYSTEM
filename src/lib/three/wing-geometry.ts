@@ -1,7 +1,8 @@
 /* 蝴蝶的几何数据与采样。
  *
  * 路径 d 字符串逐字迁自旧的 src/components/Butterfly.tsx（:6-125 的常量，以及写在 JSX
- * 内联的 body / antenna / rays / socket 路径），这样和改造前的画面可以逐条比对。
+ * 内联的 body / antenna / rays 路径），这样和改造前的画面可以逐条比对。
+ * 节点插座（socket）已删：它的视觉职责由 node-rings.ts 的三层接口环接管。
  * 全部是设计像素坐标（1440×900），换算世界坐标由引用方用 design-space 完成。
  *
  * 不引 three：这里只做纯数学采样，能脱离浏览器直接跑数值校验。
@@ -394,8 +395,6 @@ export const ANTENNA = [
   { d: "M 713 445 C 710 404 694 342 672 282", hinge: [713, 445] as Pt, tip: [672, 282] as Pt },
   { d: "M 727 445 C 730 404 746 342 768 282", hinge: [727, 445] as Pt, tip: [768, 282] as Pt },
 ];
-
-export const SOCKET = { outerR: 48, ringR: 33, cross: "M -55 0 H -46 M 46 0 H 55 M 0 -55 V -46 M 0 46 V 55" };
 
 export const CORE = {
   cx: 720,

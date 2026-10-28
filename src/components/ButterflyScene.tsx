@@ -5,6 +5,8 @@ import * as THREE from "three";
 
 import { buildEcoButterfly, type ButterflyParts } from "@/lib/three/butterfly-scene";
 import { buildFlagshipButterfly } from "@/lib/three/flagship-butterfly";
+import { createNodeRings } from "@/lib/three/node-rings";
+import { createHoverResolver } from "@/lib/three/hover-raycast";
 import { createWingAnimator, type WingAnimator } from "@/lib/three/wing-animator";
 import { createCameraRig } from "@/lib/three/camera-rig";
 import { createLabelController } from "@/lib/three/label-controller";
@@ -18,7 +20,7 @@ import {
   fractionToDesignPx,
   toWorld,
 } from "@/lib/three/design-space";
-import { MODULE_NODES, type NodeId, type WingSide } from "@/lib/nodes";
+import { MODULE_NODES, NODE_BY_ID, type ModuleNode, type NodeId, type WingSide } from "@/lib/nodes";
 import { detectInitialTier, type RenderTier } from "@/lib/environment";
 import {
   createFpsGovernor,
@@ -27,8 +29,6 @@ import {
 } from "@/lib/three/performance-tier";
 
 type Props = {
-  hoveredSide: WingSide | null;
-  hoveredId: NodeId | null;
   /** 动画总闸：安静 / 静态 / 标签页失焦 / 面板打开时为 false */
   flowOn: boolean;
   /** 越大越慢（quiet 模式 1.65），只在这里作用于 clock 推进 */
@@ -42,7 +42,7 @@ type Props = {
   onTierDecided?: (tier: RenderTier) => void;
   /** 时序走完（≈1.3s）后才通知上层开面板 */
   onTransitionReady?: (node: NodeId) => void;
-  /** 给上层一个命令入口：发起聚焦 / 开始返回 / 深链快进 */
+  /** 给上层一个命令入口：发起聚焦 / 开始返回 / 深链快进 / 并入键盘 focus */
   sceneApiRef?: { current: SceneApi | null };
 };
 
@@ -50,11 +50,14 @@ export type SceneApi = {
   focus(node: NodeId): void;
   beginReturn(): void;
   skip(to: "locked" | "idle"): void;
+  /**
+   * DOM 侧的 hover（键盘 focus / blur）并进食口。
+   * hover 判定本身在 3D 里（热区射线 + 300ms 迟滞），这里只是把 DOM 那一路合进来。
+   */
+  setDomHover(node: ModuleNode | null): void;
 };
 
 export default function ButterflyScene({
-  hoveredSide,
-  hoveredId,
   flowOn,
   tempo,
   litPulse,
@@ -65,9 +68,12 @@ export default function ButterflyScene({
   sceneApiRef,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const liveRef = useRef({ flowOn, tempo, glow, hoveredSide, hoveredId, hardLock });
+  const liveRef = useRef({ flowOn, tempo, glow, hardLock });
   /* 每次渲染都同步最新 props，避免把依赖项塞进挂载 effect 里重建整个场景 */
-  liveRef.current = { flowOn, tempo, glow, hoveredSide, hoveredId, hardLock };
+  liveRef.current = { flowOn, tempo, glow, hardLock };
+
+  /** 射线 + DOM 并集、再经 300ms 迟滞后的 hover —— 唯一的 hover 真相 */
+  const hoverRef = useRef<NodeId | null>(null);
 
   const dirtyRef = useRef(true);
   const conductRef = useRef<WingAnimator | null>(null);
@@ -82,7 +88,7 @@ export default function ButterflyScene({
 
   useEffect(() => {
     dirtyRef.current = true;
-  }, [hoveredSide, hoveredId, glow, flowOn, tempo]);
+  }, [glow, flowOn, tempo, hardLock]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -129,23 +135,44 @@ export default function ButterflyScene({
     }
     scene.add(parts.root);
 
+    /* 节点环两档都建，而且挂在翼 pivot 下（跟着折叠走），所以降档时不用重挂 */
+    const rings = createNodeRings(parts, resolution);
+
     const camera = new THREE.PerspectiveCamera(CAMERA_FOV, DESIGN_W / DESIGN_H, 0.1, 200);
     camera.position.set(0, 0, CAMERA_DISTANCE);
     camera.lookAt(0, 0, 0);
 
     const rig = createCameraRig(camera);
-    const labels = createLabelController();
+    /* 标签投影的是环心的当前世界坐标，不是静态设计坐标 —— 环走字就走，不会脱开 */
+    const labels = createLabelController(rings.worldPosition);
     labels.collect(host.parentElement ?? host);
 
     const animator = createWingAnimator(parts);
     conductRef.current = animator;
 
-    /* 节点世界坐标：hover 时给相机当聚焦目标 */
-    const focusPoints = new Map<NodeId, THREE.Vector3>();
-    for (const node of MODULE_NODES) {
-      const [px, py] = fractionToDesignPx(node.x, node.y);
-      focusPoints.set(node.id, new THREE.Vector3(...toWorld(px, py)));
-    }
+    /* hover 主源：射线打在不可见球形热区上。监听挂在 .butterfly-float（canvas 本身
+       pointer-events:none），触屏不发 mouse/pen 的 pointermove，所以不会误触发推镜。 */
+    const floatHost = host.parentElement ?? host;
+    const resolver = createHoverResolver(camera, floatHost, rings.worldPosition);
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerType === "mouse" || event.pointerType === "pen") {
+        resolver.setPointer(event.clientX, event.clientY);
+      } else {
+        resolver.clearPointer();
+      }
+    };
+    const onPointerLeave = () => resolver.clearPointer();
+    floatHost.addEventListener("pointermove", onPointerMove);
+    floatHost.addEventListener("pointerleave", onPointerLeave);
+
+    /* 聚焦目标：环心的实时世界坐标。
+       刻意不用静态设计坐标 —— 环贴着翼面，折叠会让它在 z 上来回摆 0.26 世界单位，
+       推镜后这个深度差被放大成 ~36 CSS 像素的横向漂移（比整个热区半径还大），
+       指针就会被自己推出来的画面甩出热区，形成横跳。射线跟着环心走，投影才纹丝不动。 */
+    const focusScratch = new THREE.Vector3();
+    const focusFor = (id: NodeId | null): THREE.Vector3 | null =>
+      id ? rings.worldPosition(id, focusScratch) : null;
 
     let clock = clockRef.current;
     let frame = 0;
@@ -195,6 +222,8 @@ export default function ButterflyScene({
       camera.updateProjectionMatrix();
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, rigEnabled ? 2 : 1.5));
       renderer.setSize(width, height, false);
+      /* 容器矩形变了，热区判定的 NDC 换算必须重新取一次 rect */
+      resolver.invalidateRect();
       dirtyRef.current = true;
     };
 
@@ -215,9 +244,6 @@ export default function ButterflyScene({
        自动化断言就无从下手。这个开关只模拟"页面可见且聚焦"，不绕过任何业务分支。 */
     let debugForceFlow = false;
 
-    const focusFor = (id: NodeId | null): THREE.Vector3 | null =>
-      id ? focusPoints.get(id) ?? null : null;
-
     if (sceneApiRef) {
       sceneApiRef.current = {
         focus(node) {
@@ -232,8 +258,21 @@ export default function ButterflyScene({
           machine.skip(to);
           dirtyRef.current = true;
         },
+        setDomHover(node) {
+          resolver.setDomHover(node?.id ?? null);
+          dirtyRef.current = true;
+        },
       };
     }
+
+    /** 迟滞判定每帧都要跑，停帧分支也不例外，否则 300ms 永远走不完 */
+    const stepHover = (dt: number) => {
+      const id = resolver.resolve(dt);
+      if (id !== hoverRef.current) {
+        hoverRef.current = id;
+        dirtyRef.current = true;
+      }
+    };
 
     /**
      * 唯一的绘制路径。dev 钩子和 rAF 循环都走它 ——
@@ -243,18 +282,27 @@ export default function ButterflyScene({
       const state = liveRef.current;
       const flowOn = state.flowOn || debugForceFlow;
       const visible = !document.hidden || debugForceFlow;
+      const hoveredId = hoverRef.current;
 
-      /* hover 是状态机的入口事件，不只是亮度开关：进 hover 会减速定格 + 亮虚影光路 */
-      if (state.hoveredId !== lastHoveredId) {
-        if (state.hoveredId) machine.hoverStart(state.hoveredId);
-        else machine.hoverEnd();
-        lastHoveredId = state.hoveredId;
+      /* 只有 idle / hover 两个态吃 hover 事件。锁止与返回期间连"上一次是谁"都不更新，
+         所以回到 idle 后指针若还停在环上会补一次 hoverStart，不会出现"亮着但不聚焦"。 */
+      const phase = machine.phase;
+      if (phase === "idle" || phase === "hover") {
+        if (hoveredId !== lastHoveredId) {
+          if (hoveredId) machine.hoverStart(hoveredId);
+          else machine.hoverEnd();
+          lastHoveredId = hoveredId;
+        } else if (hoveredId && phase === "idle") {
+          machine.hoverStart(hoveredId);
+        }
       }
 
       const out = machine.update({
         dt,
         ticking: flowOn && visible,
-        settled: rig.isSettled(),
+        /* 节能档不跑相机，rig 的 settled 永远是 false —— 那样光路的闸门就永远打不开，
+           点了节点卡在 locking、面板再也不出来。机位本来就固定，构图「稳定」是定义成立的。 */
+        settled: rigEnabled ? rig.isSettled() : true,
         hardLock: state.hardLock,
       });
 
@@ -268,10 +316,17 @@ export default function ButterflyScene({
         labels.place(camera, host.clientWidth, host.clientHeight);
       }
 
+      /* 环：hover / 锁止 / 安静三路输入。锁止高亮一直保持到整段返回走完才松，
+         这样"点击 → 转场 → 返回"读起来是一个连贯的手势。 */
+      rings.setHover(hoveredId);
+      rings.setActive(machine.phase === "idle" || machine.phase === "hover" ? null : machine.target);
+      rings.setQuiet(state.hardLock);
+      rings.update(dt, flowOn && !state.hardLock);
+
       animator.apply(value, dt, {
         flowOn,
         glow: state.glow,
-        hoveredSide: state.hoveredSide,
+        hoveredSide: hoveredId ? NODE_BY_ID[hoveredId].side : null,
         wingGate: out.wingGate,
         snapWings: out.snapWings,
         restartBreathing: out.restartBreathing,
@@ -292,15 +347,18 @@ export default function ButterflyScene({
       const visible = !document.hidden;
 
       governor.sample(syntheticFps ? 1 / syntheticFps : realDt, visible);
+      stepHover(realDt);
 
       if (state.flowOn) {
         /* tempo 是除数：1.65 时 clock 走得慢，所有周期自然变长 */
         clock += realDt / state.tempo;
         clockRef.current = clock;
         drawFrame(clock, realDt);
-      } else if (dirtyRef.current) {
-        /* 停帧：只补一帧静态画面（hover / glow / 档位变化时也要重绘） */
-        drawFrame(clock, 1 / 60);
+      } else if (dirtyRef.current || rings.busy) {
+        /* 停帧：只补静态画面（hover / glow / 档位变化时也要重绘）。
+           hover 展开属于 transition 而不是 animation，安静档里也得跟手，
+           所以环还在动时继续补帧，并用真实 dt。 */
+        drawFrame(clock, rings.busy ? realDt : 1 / 60);
         dirtyRef.current = false;
       }
 
@@ -319,6 +377,25 @@ export default function ButterflyScene({
           clock = value;
           clockRef.current = value;
           drawFrame(value, 1 / 60);
+        },
+        /** 手动推进一帧（含迟滞计时）：隐藏标签页里 rAF 不跑，横跳回归只能靠它 */
+        tick(dt: number) {
+          clock += dt;
+          clockRef.current = clock;
+          stepHover(dt);
+          drawFrame(clock, dt);
+          return hoverRef.current;
+        },
+        pointer: (clientX: number, clientY: number) => resolver.setPointer(clientX, clientY),
+        clearPointer: () => resolver.clearPointer(),
+        /** 射线命中 / DOM 输入 / 迟滞后的提交值 + 已累积的离开时长 */
+        hover: () => resolver.inspect(),
+        /** 逐层 α、中层转速、展开环可见性、环心世界坐标 */
+        rings: (id: NodeId) => rings.inspect(id),
+        /** 光路终点世界坐标：断言它精确落在宝珠上 */
+        pathEnd: () => {
+          const v = lightPath.worldEnd(new THREE.Vector3());
+          return v ? v.toArray().map((n) => Number(n.toFixed(4))) : null;
         },
         stats: () => ({
           tier: parts.mode,
@@ -340,7 +417,8 @@ export default function ButterflyScene({
           return {
             phase: machine.phase,
             path: machine.path,
-            hoveredId: liveRef.current.hoveredId,
+            hoveredId: hoverRef.current,
+            ringsBusy: rings.busy,
             gate: Number(machine.wingGate.toFixed(4)),
             radius: Number(rig.radius.toFixed(3)),
             settled: rig.isSettled(),
@@ -372,6 +450,22 @@ export default function ButterflyScene({
           debugForceFlow = value;
         },
         snapshot: () => canvas.toDataURL("image/png"),
+        /** 按类型数一遍真正会提交绘制的对象，用来核对 draw call 账 */
+        objects: () => {
+          const tally: Record<string, number> = { fatLines: 0, sprites: 0, meshes: 0, points: 0 };
+          parts.root.traverse((object) => {
+            const mesh = object as THREE.Mesh | THREE.Sprite | THREE.Points;
+            if (!mesh.visible) return;
+            const geometry = (mesh as THREE.Mesh).geometry as
+              | (THREE.BufferGeometry & { isLineSegmentsGeometry?: boolean })
+              | undefined;
+            if (geometry?.isLineSegmentsGeometry) tally.fatLines += 1;
+            else if ((mesh as THREE.Sprite).isSprite) tally.sprites += 1;
+            else if ((mesh as THREE.Points).isPoints) tally.points += 1;
+            else if ((mesh as THREE.Mesh).isMesh) tally.meshes += 1;
+          });
+          return tally;
+        },
         setTier: applyTier,
       };
     }
@@ -379,7 +473,10 @@ export default function ButterflyScene({
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      floatHost.removeEventListener("pointermove", onPointerMove);
+      floatHost.removeEventListener("pointerleave", onPointerLeave);
       conductRef.current = null;
+      hoverRef.current = null;
       if (sceneApiRef) sceneApiRef.current = null;
       lightPath.dispose();
       for (const disposable of parts.disposables) disposable.dispose();
@@ -399,29 +496,42 @@ export default function ButterflyScene({
 }
 
 /**
- * 开发期一次性自检：容器长宽比必须与设计稿一致，否则投影与 DOM 层的对应关系会偏。
- * 环绕档下标签每帧重投影，这里只验「相机几何本身对不对」。
+ * 开发期一次性自检：容器长宽比必须与设计稿一致，且「固定机位下世界坐标 → 容器百分比」
+ * 必须逐点相等 —— 这是 DOM 标签层和 3D 层能对齐的全部前提。
+ *
+ * 判定用一台**放回初始机位的探针相机**，不用现场这台：旗舰档的 rig 在 applyTier 里
+ * 已经把相机推到 6° 俯仰的巡航位姿上，那本来就是要靠 labels.place 逐帧补偿的偏移，
+ * 拿它当"映射错了"来报只会刷一条假警告（实测 0.4%）。
  */
 function reportAlignment(host: HTMLElement, camera: THREE.PerspectiveCamera) {
   const rect = host.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
 
-  camera.updateMatrixWorld(true);
+  const probe = new THREE.PerspectiveCamera(CAMERA_FOV, camera.aspect, 0.1, 200);
+  probe.position.set(0, 0, CAMERA_DISTANCE);
+  probe.lookAt(0, 0, 0);
+  probe.updateMatrixWorld(true);
+
   let worst = 0;
   for (const node of MODULE_NODES) {
     const [px, py] = fractionToDesignPx(node.x, node.y);
-    const vector = new THREE.Vector3(...toWorld(px, py)).project(camera);
+    const vector = new THREE.Vector3(...toWorld(px, py)).project(probe);
     const sx = (vector.x + 1) / 2;
     const sy = (1 - vector.y) / 2;
     worst = Math.max(worst, Math.abs(sx - node.x), Math.abs(sy - node.y));
   }
 
+  const aspectError = Math.abs(camera.aspect - rect.width / rect.height) / (rect.width / rect.height);
   console.log(
     `[butterfly3d] 容器 ${rect.width.toFixed(1)}×${rect.height.toFixed(1)}` +
       `（长宽比 ${(rect.width / rect.height).toFixed(4)}，设计稿 ${(DESIGN_W / DESIGN_H).toFixed(4)}）` +
-      ` · 相机 aspect ${camera.aspect.toFixed(4)} · 固定机位下 3D↔DOM 最大偏差 ${(worst * 100).toFixed(4)}%`,
+      ` · 相机 aspect ${camera.aspect.toFixed(4)}（误差 ${(aspectError * 100).toFixed(3)}%，来自 clientWidth 取整）` +
+      ` · 固定机位下 3D↔DOM 最大偏差 ${(worst * 100).toFixed(4)}%`,
   );
   if (worst > 0.002) {
-    console.warn("[butterfly3d] 固定机位投影偏差超过 0.2%，检查相机长宽比或 .butterfly-canvas 尺寸");
+    console.warn("[butterfly3d] 固定机位投影偏差超过 0.2%，检查相机 fov/距离或 .butterfly-canvas 尺寸");
+  }
+  if (aspectError > 0.005) {
+    console.warn("[butterfly3d] 相机长宽比与容器差 0.5% 以上，投影与 DOM 层的对应关系会偏");
   }
 }

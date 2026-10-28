@@ -19,6 +19,7 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { WING_SPEC, type WingQuadrant } from "./butterfly-scene";
 import { MODULE_NODES, type NodeId } from "../nodes";
 import { parsePath, type Pt } from "./wing-geometry";
+import { nodeLocalPosition } from "./node-rings";
 import { toWorldSize } from "./design-space";
 import { createFlowDot } from "./glow-texture";
 export type LightPathState = "off" | "ghost" | "active" | "dissolving";
@@ -41,6 +42,8 @@ export type LightPath = {
   object: THREE.Group;
   setTarget(node: NodeId | null): void;
   update(dt: number, state: LightPathState): void;
+  /** 光路终点的世界坐标：断言它和宝珠重合用 */
+  worldEnd(out: THREE.Vector3): THREE.Vector3 | null;
   dispose(): void;
 };
 
@@ -159,7 +162,26 @@ export function createLightPath(
          然后立刻接入那条主脉 —— 中间没有另造的曲线。 */
       const coreLocal = local([720, 486], hinge);
       const veinPoints = (parsePath(vein)[0] ?? []).map((p) => local(p, hinge));
-      curve = new THREE.CatmullRomCurve3([coreLocal, ...veinPoints], false, "catmullrom", 0.4);
+
+      /* 沿脉络走到**离节点最近的采样点**就截断，再补一个环心点。
+         不截断的话光路会一路冲到翼尖，"落到宝珠上"就变成从旁边擦过去。 */
+      const pearl = nodeLocalPosition(node);
+      let cut = 0;
+      let nearestSq = Number.POSITIVE_INFINITY;
+      veinPoints.forEach((p, index) => {
+        const dSq = (p.x - pearl.x) ** 2 + (p.y - pearl.y) ** 2;
+        if (dSq < nearestSq) {
+          nearestSq = dSq;
+          cut = index;
+        }
+      });
+
+      curve = new THREE.CatmullRomCurve3(
+        [coreLocal, ...veinPoints.slice(0, cut + 1), new THREE.Vector3(pearl.x, pearl.y, PATH_Z)],
+        false,
+        "catmullrom",
+        0.4,
+      );
 
       /* reparent：光路必须挂在翼 pivot 里，才会跟着折叠一起动 */
       const quadrant = `${node.side}${mapping.kind === "fore" ? "Top" : "Bottom"}` as WingQuadrant;
@@ -210,6 +232,14 @@ export function createLightPath(
         activeMaterial.opacity = Math.max(0, activeMaterial.opacity - dt * 2.2);
         particleMaterial.opacity = Math.max(0, particleMaterial.opacity - dt * 1.6);
       }
+    },
+
+    worldEnd(out) {
+      if (!curve) return null;
+      /* 曲线在翼 pivot 局部坐标里，终点必须换算到世界才和宝珠可比 */
+      curve.getPointAt(1, out);
+      group.updateWorldMatrix(true, false);
+      return group.localToWorld(out);
     },
 
     dispose() {

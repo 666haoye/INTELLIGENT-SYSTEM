@@ -41,6 +41,7 @@ type SceneApi = {
   focus(node: NodeId): void;
   beginReturn(): void;
   skip(to: "locked" | "idle"): void;
+  setDomHover(node: ModuleNode | null): void;
 };
 
 function BrandMark() {
@@ -72,8 +73,6 @@ export default function HomeExperience() {
   const [quiet, setQuiet] = useState(false);
   const [isStatic, setIsStatic] = useState(false);
   const [pagePaused, setPagePaused] = useState(false);
-  const [hoveredSide, setHoveredSide] = useState<WingSide | null>(null);
-  const [hoveredId, setHoveredId] = useState<NodeId | null>(null);
   /* 档位由 3D 层判定后回传；null 表示还没定，此时不加 is-flagship */
   const [renderTier, setRenderTier] = useState<RenderTier | null>(null);
   const [litPulse, setLitPulse] = useState<{ side: WingSide; key: number } | null>(null);
@@ -214,9 +213,13 @@ export default function HomeExperience() {
     }, 520);
   }, []);
 
+  /**
+   * 键盘 focus / blur 并入 3D 的 hover 判定。
+   * hover 本身不再由 React 持有：鼠标那一路是热区射线 + 300ms 迟滞，每帧都在 3D 里算，
+   * 放这里会让每次进出都触发整棵首页重渲染，却没有第二个消费者。
+   */
   const handleHoverChange = useCallback((node: ModuleNode | null) => {
-    setHoveredSide(node?.side ?? null);
-    setHoveredId(node?.id ?? null);
+    sceneApi.current?.setDomHover(node);
   }, []);
 
   /* 点击节点：不立刻开面板，先点亮 3D 的聚焦时序（约 1.3s），到位后才转场 */
@@ -242,8 +245,6 @@ export default function HomeExperience() {
   const openPanel = useCallback(
     (node: ModuleNode, trigger: HTMLButtonElement | null) => {
       lastTriggerRef.current = trigger;
-      setHoveredSide(null);
-      setHoveredId(null);
       setKnowledgeTarget(null);
       setKnowledgeFromProblem(false);
       if (node.id === "problem") setProblemReturnQuery("");
@@ -396,8 +397,6 @@ export default function HomeExperience() {
           <div className="butterfly-center">
             <div className="butterfly-float">
               <ButterflyScene
-                hoveredSide={hoveredSide}
-                hoveredId={hoveredId}
                 flowOn={stageFlowOn}
                 tempo={tempo}
                 litPulse={litPulse}

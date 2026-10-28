@@ -3,6 +3,8 @@ node_modules/
 
 # next.js
 .next/
+# export:single 期间的临时 distDir（dev 会 watch next.config.ts 重启，可能把它重建出来）
+.next-export/
 out/
 next-env.d.ts
 # tsc --noEmit 在 incremental 模式下生成的缓存，不是源码

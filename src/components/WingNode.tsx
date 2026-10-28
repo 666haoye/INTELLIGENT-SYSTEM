@@ -6,7 +6,11 @@ import type { ModuleNode, NodeId } from "@/lib/nodes";
 type WingNodeProps = {
   node: ModuleNode;
   onOpen: (node: ModuleNode, trigger: HTMLButtonElement | null) => void;
-  /** 交回整个节点：上层既要翼侧（side）做亮度联动，也要节点 id 给相机聚焦 */
+  /**
+   * 只报键盘 focus / blur。鼠标那一路的 hover 判定已经交给 3D 的热区射线
+   * （见 hover-raycast.ts）：推镜会改透视，DOM 矩形跟不上画面，
+   * 两个源各说各话就是"相机在拉近/恢复之间横跳"的根因。
+   */
   onHoverChange: (node: ModuleNode | null) => void;
   registerRef: (id: NodeId, element: HTMLButtonElement | null) => void;
 };
@@ -43,8 +47,6 @@ export default function WingNode({
       className="wing-node-anchor"
       data-node-id={node.id}
       style={{ left: `${node.x * 100}%`, top: `${node.y * 100}%` }}
-      onPointerEnter={() => onHoverChange(node)}
-      onPointerLeave={() => onHoverChange(null)}
       onClick={handleOpen}
     >
       <button

@@ -17,10 +17,16 @@ export type LabelController = {
   reset(): void;
 };
 
-export function createLabelController(): LabelController {
+/**
+ * positionOf 给的是**节点环当前的世界坐标**。环挂在翼 pivot 下，折叠时它会动，
+ * 标签只有投影同一个点才不会出现"字停在原地、环走开了"的错位。
+ * 不传（或拿不到）就退回静态设计坐标。
+ */
+export function createLabelController(
+  positionOf?: (id: NodeId, out: THREE.Vector3) => THREE.Vector3 | null,
+): LabelController {
   const refs = new Map<NodeId, HTMLElement>();
 
-  /** 节点在世界坐标里是静态的（不随翼扇动），预算一次即可 */
   const anchors = MODULE_NODES.map((node) => {
     const [px, py] = fractionToDesignPx(node.x, node.y);
     const [wx, wy, wz] = toWorld(px, py);
@@ -45,6 +51,7 @@ export function createLabelController(): LabelController {
         const element = refs.get(anchor.id);
         if (!element) continue;
 
+        positionOf?.(anchor.id, anchor.world);
         projected.copy(anchor.world).project(camera);
         if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y)) continue;
 

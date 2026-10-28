@@ -1,10 +1,16 @@
 /* 相机运镜（阶段 1.5 收敛版）：默认近乎静止的正面构图，聚焦靠阻尼推镜，永不贴脸。
  *
- * 三条硬约束：
+ * 四条硬约束：
  *  1) 半径硬下限 0.4×初始距离（规范红线），用 Math.max 夹在每一帧，不依赖调用方自觉。
  *  2) 只用指数阻尼插值（1 - exp(-dt/τ)），与帧率无关；没有线性插值、没有急停急启。
- *  3) 聚焦/点击时偏航与俯仰都归零 —— 镜头只在 z 轴上推，画面不会同时转+推，
+ *  3) 只有巡航会转：focus 把姿态冻在当下，lock / return 才归零 —— 镜头不会一边转一边推，
  *     这是消除 3D 晕眩最有效的一条。
+ *  4) **focus 推镜不得移动被聚焦节点的投影位置**：沿「机位 → 节点」这条射线推进，
+ *     相机朝向又保持不动，于是节点在屏幕上一动不动。实测原先的「拉近 + lookAt 拉向节点
+ *     + 偏航归零」三件事叠加，会把节点朝画面中心推 42 CSS 像素 —— 比整个热区半径
+ *     （41.7）还大，指针当场掉出自己触发的热区、hover 撤销、相机回位、hover 又回来，
+ *     这就是用户报的横跳根因。
+ *     lock 保留原来的"把节点拉进构图"，因为那时 hover 已被状态机忽略，且点击已经完成。
  */
 import * as THREE from "three";
 import {
@@ -37,6 +43,8 @@ export function createCameraRig(camera: THREE.PerspectiveCamera): CameraRig {
   const desiredLook = new THREE.Vector3();
   const currentLook = new THREE.Vector3(0, 0, 0);
   const previousPosition = new THREE.Vector3().copy(camera.position);
+  const pivot = new THREE.Vector3();
+  const toFocus = new THREE.Vector3();
 
   let radius = HOME_DISTANCE;
   let yaw = 0;
@@ -69,12 +77,22 @@ export function createCameraRig(camera: THREE.PerspectiveCamera): CameraRig {
             ? HOME_DISTANCE * FOCUS_RADIUS_RATIO
             : HOME_DISTANCE;
 
-      const targetYaw = mode === "cruise" ? Math.sin((clock / CRUISE_PERIOD) * Math.PI * 2) * CRUISE_YAW_AMPLITUDE : 0;
+      /* focus 时把姿态**冻在当下**（目标就是当前值，阻尼自然不动）：
+         hover 不该让画面转 2° —— 那是 35 CSS 像素的整体平移，比热区半径还大，
+         指针会被自己推出去的画面甩掉。归零姿态留给 lock（点击之后 hover 已经无所谓了）。 */
+      const targetYaw =
+        mode === "focus"
+          ? yaw
+          : mode === "cruise"
+            ? Math.sin((clock / CRUISE_PERIOD) * Math.PI * 2) * CRUISE_YAW_AMPLITUDE
+            : 0;
       const targetElevation =
-        mode === "cruise"
-          ? CRUISE_ELEVATION_BASE +
-            Math.sin((clock / CRUISE_PERIOD) * Math.PI * 2) * CRUISE_PITCH_AMPLITUDE
-          : CRUISE_ELEVATION_BASE;
+        mode === "focus"
+          ? elevation
+          : mode === "cruise"
+            ? CRUISE_ELEVATION_BASE +
+              Math.sin((clock / CRUISE_PERIOD) * Math.PI * 2) * CRUISE_PITCH_AMPLITUDE
+            : CRUISE_ELEVATION_BASE;
 
       radius += (targetRadius - radius) * damping;
       yaw += (targetYaw - yaw) * damping;
@@ -82,16 +100,35 @@ export function createCameraRig(camera: THREE.PerspectiveCamera): CameraRig {
 
       /* 规范红线：不管上面怎么算，实际半径不得低于初始距离的 40% */
       const clampedRadius = Math.max(radius, HOME_DISTANCE * MIN_RADIUS_RATIO);
+      const cosElevation = Math.cos(elevation);
+      const ratio = clampedRadius / HOME_DISTANCE;
 
-      desiredPosition.set(
-        clampedRadius * Math.cos(elevation) * Math.sin(yaw),
-        clampedRadius * Math.sin(elevation),
-        clampedRadius * Math.cos(elevation) * Math.cos(yaw),
+      /* 初始距离处的机位（pivot）。focus 沿「pivot → 环心」的射线往里推，
+         其余模式把 pivot 整体收放 —— 收放会连带改变 lookAt 的方向，
+         所以 focus 分支必须单独把轴向钉住，见下面。 */
+      pivot.set(
+        HOME_DISTANCE * cosElevation * Math.sin(yaw),
+        HOME_DISTANCE * Math.sin(elevation),
+        HOME_DISTANCE * cosElevation * Math.cos(yaw),
       );
 
       desiredLook.set(0, 0, 0);
-      if (focus) desiredLook.copy(focus).multiplyScalar(mode === "lock" ? 0.55 : 0.4);
-      currentLook.lerp(desiredLook, damping);
+
+      if (mode === "focus" && focus) {
+        /* 沿「机位 → 环心」这条射线推进，同时把视线目标挂在位姿上，
+           让相机轴向恒等于不推镜时的那条（pivot → 原点）。
+           少了后一半，推近会让相机顺手转 ~1.4°，横扫 27 CSS 像素 ——
+           环从指针底下溜走、hover 撤销、相机回位、hover 又回来，横跳就是这么来的。
+           位姿本身已经过阻尼（ratio 来自 radius），所以朝向直接跟随，不再二次插值。 */
+        toFocus.copy(focus).sub(pivot);
+        desiredPosition.copy(pivot).addScaledVector(toFocus, 1 - ratio);
+        desiredLook.copy(desiredPosition).sub(pivot);
+        currentLook.copy(desiredLook);
+      } else {
+        desiredPosition.copy(pivot).multiplyScalar(ratio);
+        if (focus) desiredLook.copy(focus).multiplyScalar(mode === "lock" ? 0.55 : 0.4);
+        currentLook.lerp(desiredLook, damping);
+      }
 
       camera.position.copy(desiredPosition);
       camera.lookAt(currentLook);
