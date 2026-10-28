@@ -1,0 +1,4 @@
+# 平台用 `bash scripts/deploy-*.sh` 执行，Linux 侧一旦拿到 CRLF 就会报
+# bash: $'\r': command not found 并以非 0 退出——表现为一句没有细节的 exit status 1。
+# 本机 core.autocrlf=true，所以必须在索引层钉死 LF，不能靠运气。
+*.sh text eol=lf

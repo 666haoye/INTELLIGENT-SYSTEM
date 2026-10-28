@@ -274,7 +274,9 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/health") {
     sendJson(res, 200, {
-      ok: true,
+      /* ok 表示「AI 可用」，不只是「进程活着」：缺凭证时进程照样监听，
+         但 /chat 会返回 config 错误，这里就不该报绿。 */
+      ok: MOCK || (Boolean(PAT) && Boolean(BOT_ID)),
       mock: MOCK,
       hasPat: Boolean(PAT),
       hasBotId: Boolean(BOT_ID),
@@ -304,6 +306,15 @@ const server = http.createServer(async (req, res) => {
       typeof parsed?.conversationId === "string" && parsed.conversationId
         ? parsed.conversationId
         : null;
+
+    if (!MOCK && (!PAT || !BOT_ID)) {
+      sendJson(
+        res,
+        502,
+        fail("config", "服务端未配置 COZE_PAT / COZE_BOT_ID，请在平台环境变量面板补上"),
+      );
+      return;
+    }
 
     try {
       const result = MOCK
@@ -338,26 +349,26 @@ server.on("error", (error) => {
   throw error;
 });
 
+/* 缺凭证刻意不再 process.exit(1)。start:all 用的是 concurrently -k，代理一退出
+   next 就被一起带走，容器表现为一句没有细节的 exit status 1 —— 一个只影响 AI 的
+   配置错误会升级成整站打不开。改为照常监听、把 /chat 变成明确的 config 错误：
+   首页、知识库、案例库、实验都仍然可用，只有 AI 回复会给出可读提示。 */
 if (!MOCK && (!PAT || !BOT_ID)) {
   console.error(
     [
-      "[coze-proxy] 缺少凭证，无法启动。",
-      "请在项目根目录创建 .env.local，内容：",
-      "  COZE_PAT=<你的真实令牌>",
-      "  COZE_BOT_ID=7xxxxxxxxxxxxxxxx",
-      "（.gitignore 已含 .env*，不会被提交）",
-      "只想验 UI 可用 mock 模式：COZE_MOCK=1 node scripts/coze-proxy.mjs",
+      "[coze-proxy] 警告：缺少凭证，AI 接口将返回 config 错误（站点其余部分不受影响）。",
+      "本地：在项目根目录 .env.local 写入 COZE_PAT / COZE_BOT_ID；",
+      "云端：在平台的环境变量面板配置同名两项（.env.local 不会进版本库，云端也不会有）。",
+      "只想验 UI：COZE_MOCK=1 node scripts/coze-proxy.mjs",
     ].join("\n"),
   );
-  process.exit(1);
 }
 
 server.listen(PORT, HOST, () => {
-  console.log(
-    "[coze-proxy] http://" +
-      HOST +
-      ":" +
-      PORT +
-      (MOCK ? "（MOCK 模式，不打上游）" : "（bot_id " + BOT_ID + "）"),
-  );
+  const mode = MOCK
+    ? "MOCK 模式，不打上游"
+    : PAT && BOT_ID
+      ? "bot_id " + BOT_ID
+      : "凭证缺失，AI 接口降级为 config 错误";
+  console.log("[coze-proxy] http://" + HOST + ":" + PORT + "（" + mode + "）");
 });
