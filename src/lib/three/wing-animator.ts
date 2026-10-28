@@ -30,22 +30,17 @@ const CORE_RING_SPIN_PERIOD = 32;
 /** 穹顶自转：一圈约 10 分钟，只作空间感，不该被意识成「在动」 */
 const DOME_PERIOD = 600;
 
-const ANTENNA_PERIOD: Record<WingSide, number> = { left: 9, right: 10.5 };
-const ANTENNA_DELAY: Record<WingSide, number> = { left: 0, right: -3.4 };
-const ANTENNA_FRAMES: Record<WingSide, Array<[number, number]>> = {
-  left: [
-    [0, 1.2],
-    [0.42, -1.6],
-    [0.72, 0.2],
-    [1, 1.2],
-  ],
-  right: [
-    [0, -1],
-    [0.38, 1.5],
-    [0.7, -0.3],
-    [1, -1],
-  ],
+/**
+ * 触须：与翼折叠**同频**（6s），幅度放大到 ±5.5°/±6.5°，左右反向摆动形成对称外扩。
+ * 相位由 wingClock 驱动，所以 hover 定格 / 安静锁死时触须会跟着一起停，
+ * 而不是翅膀停了自己还在飘。两侧给了很小的相位差，避免"机械同步"的僵感。
+ */
+const ANTENNA_PERIOD = FOLD_PERIOD;
+const ANTENNA_AMPLITUDE: Record<WingSide, number> = {
+  left: (5.5 * Math.PI) / 180,
+  right: (6.5 * Math.PI) / 180,
 };
+const ANTENNA_PHASE: Record<WingSide, number> = { left: 0.12, right: 0.22 };
 
 const CONDUCT_DURATION = 1.4;
 /** 每层的目标 opacity 相对基准值的倍率，峰值时刻照抄 CSS 关键帧 */
@@ -80,8 +75,6 @@ const HOVER_LIFT: Partial<Record<BrightnessLayer, number>> = {
 
 /** 扇动时脉络亮度联动（方案 §4.2：舒展变亮、收拢变暗） */
 const FLAP_LINKED: BrightnessLayer[] = ["wingLine", "wingGlow", "veinGlow", "veinBright"];
-
-const deg2rad = (value: number) => (value * Math.PI) / 180;
 
 /**
  * 与 CSS keyframes「0%/100% 取小值、50% 取大值 + ease-in-out」同形的振荡：
@@ -155,14 +148,20 @@ export function createWingAnimator(parts: ButterflyParts): WingAnimator {
       if (input.snapWings || input.restartBreathing) wingClock = 0;
       if (active) wingClock += dt * Math.max(0, Math.min(1, input.wingGate));
 
-      /* ---- 1. 四翼同步折叠（四翼同一个角度，左翼由 scale.x=-1 自动镜像）---- */
+      /* ---- 1. 四翼同步折叠（左右符号相反，才是"同一口气"）----
+       *
+       * 左翼 pivot 带 scale.x = -1，而绕 Y 轴的旋转在 x 翻转下会**变号**：
+       * 同样的 +θ 会让右翼翼尖向 −Z（远离镜头）、左翼翼尖向 +Z（靠近镜头），
+       * 视觉上就是一前一后的左右摇摆。想让两翼同时朝同一侧开合，
+       * 左翼必须取 −θ。X 方向仍然严格镜像（取反后 cos 项不变）。 */
       const foldPhase = (wingClock / FOLD_PERIOD) * Math.PI * 2;
       const fold = FOLD_MAX * (0.5 - 0.5 * Math.cos(foldPhase));
       for (const key of Object.keys(QUADRANTS) as WingQuadrant[]) {
         const wing = parts.wings[key];
         if (!wing) continue;
-        /* 只绕 hinge 的竖直轴、只向内收，x/z 保持 0 —— 不做三轴，也不向外张 */
-        wing.rotation.set(0, fold, 0);
+        /* 正的 fold = 向观众方向收拢（两翼一起朝 +Z 倾） */
+        const sign = key.startsWith("left") ? 1 : -1;
+        wing.rotation.set(0, sign * fold, 0);
       }
 
       /* ---- 2. hover 平滑（旧 CSS 是 transition 480ms×tempo）----
@@ -216,12 +215,14 @@ export function createWingAnimator(parts: ButterflyParts): WingAnimator {
         parts.dome.rotation.y = active ? (t / DOME_PERIOD) * Math.PI * 2 : 0;
       }
 
-      /* ---- 5. 触角摆动 ---- */
+      /* ---- 5. 触须摆动（与翼同频，用翼时钟驱动）---- */
       for (const side of ["left", "right"] as const) {
         const holder = parts.antennae[side];
         if (!holder) continue;
-        const phase = (t + ANTENNA_DELAY[side]) / ANTENNA_PERIOD[side];
-        holder.rotation.z = deg2rad(keyframe(phase, ANTENNA_FRAMES[side]));
+        const phase = (wingClock / ANTENNA_PERIOD + ANTENNA_PHASE[side]) * Math.PI * 2;
+        const swing = Math.sin(phase) * ANTENNA_AMPLITUDE[side];
+        /* 左右反向 → 同时向外/向内，视觉上对称 */
+        holder.rotation.z = side === "left" ? swing : -swing;
       }
 
       /* ---- 6. 翅上光流包 ---- */

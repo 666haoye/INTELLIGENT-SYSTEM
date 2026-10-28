@@ -205,10 +205,10 @@ export default function ButterflyScene({
 
     const syntheticFps = readSyntheticFps();
 
-    /* 交互状态机只负责时序与门控，不碰 three / DOM；光路是它唯一的渲染载体 */
+    /* 交互状态机只负责时序与门控，不碰 three / DOM；光路是它唯一的渲染载体。
+       光路自己会 reparent 到对应翼的 pivot 里（贴着已有脉络走），所以不挂到 scene。 */
     const machine = createInteractionMachine();
-    const lightPath = createLightPath(resolution);
-    scene.add(lightPath.object);
+    const lightPath = createLightPath(resolution, parts.wings);
     let lastPathTarget: NodeId | null = null;
     let lastHoveredId: NodeId | null = null;
     /* 仅 dev：隐藏标签页里 pagePaused=true → flowOn=false → 动效与状态机都不推进，
@@ -332,22 +332,39 @@ export default function ButterflyScene({
           camera: camera.position.toArray().map((v) => Number(v.toFixed(3))),
         }),
         /** 状态机当前态：给「光路不早于 settle」「四翼同步」这类断言用 */
-        state: () => ({
-          phase: machine.phase,
-          path: machine.path,
-          hoveredId: liveRef.current.hoveredId,
-          gate: Number(machine.wingGate.toFixed(4)),
-          radius: Number(rig.radius.toFixed(3)),
-          settled: rig.isSettled(),
-          wings: {
-            rightTop: Number(parts.wings.rightTop.rotation.y.toFixed(5)),
-            leftTop: Number(parts.wings.leftTop.rotation.y.toFixed(5)),
-            rightBottom: Number(parts.wings.rightBottom.rotation.y.toFixed(5)),
-            leftBottom: Number(parts.wings.leftBottom.rotation.y.toFixed(5)),
-            rx: Number(parts.wings.rightTop.rotation.x.toFixed(5)),
-            rz: Number(parts.wings.rightTop.rotation.z.toFixed(5)),
-          },
-        }),
+        state: () => {
+          const tip = (key: keyof typeof parts.wings) => {
+            const v = parts.wings[key].localToWorld(new THREE.Vector3(6, 0, 0));
+            return [Number(v.x.toFixed(3)), Number(v.y.toFixed(3)), Number(v.z.toFixed(3))];
+          };
+          return {
+            phase: machine.phase,
+            path: machine.path,
+            hoveredId: liveRef.current.hoveredId,
+            gate: Number(machine.wingGate.toFixed(4)),
+            radius: Number(rig.radius.toFixed(3)),
+            settled: rig.isSettled(),
+            wings: {
+              rightTop: Number(parts.wings.rightTop.rotation.y.toFixed(5)),
+              leftTop: Number(parts.wings.leftTop.rotation.y.toFixed(5)),
+              rightBottom: Number(parts.wings.rightBottom.rotation.y.toFixed(5)),
+              leftBottom: Number(parts.wings.leftBottom.rotation.y.toFixed(5)),
+              rx: Number(parts.wings.rightTop.rotation.x.toFixed(5)),
+              rz: Number(parts.wings.rightTop.rotation.z.toFixed(5)),
+            },
+            /** 翼尖世界坐标：用来看"两翼是否朝同一侧开合" */
+            tips: {
+              rightTop: tip("rightTop"),
+              leftTop: tip("leftTop"),
+              rightBottom: tip("rightBottom"),
+              leftBottom: tip("leftBottom"),
+            },
+            antennae: {
+              left: Number(((parts.antennae.left.rotation.z * 180) / Math.PI).toFixed(2)),
+              right: Number(((parts.antennae.right.rotation.z * 180) / Math.PI).toFixed(2)),
+            },
+          };
+        },
         focus: (id: NodeId) => sceneApiRef?.current?.focus(id),
         returnStart: () => sceneApiRef?.current?.beginReturn(),
         skip: (to: "locked" | "idle") => sceneApiRef?.current?.skip(to),

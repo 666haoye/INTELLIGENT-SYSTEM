@@ -1,8 +1,14 @@
-/* 中心 → 节点的光路：hover 出虚影，镜头稳定后点亮并跑粒子，返回时反向溶解。
+/* 光路：不另造一条"核心→节点"的曲线，而是复用翅膀上**已有的那条神经**。
  *
- * 只维护一个实例（同一时刻最多一条路），两种线型都预先建好、靠 visible 切换 ——
- * 这样状态切换不产生建/销几何的开销，draw call 也固定：最多 1 条线 + 1 个粒子层。
- * 粒子刻意用**一个** Points（6 个顶点）而不是 6 个 Sprite：后者是 6 次 draw call。
+ * 四个节点各自对应一条从翼根辐射出去的主脉（右翼 FORE_MAIN[1] / HIND_MAIN[0]，
+ * 左翼是同一套局部坐标、由 pivot 的 scale.x=-1 镜像）。光路就贴着这条脉络跑，
+ * 好处有三个：
+ *  1) 视觉上"能量沿神经传导"，而不是凭空多出一根线；
+ *  2) 光路挂在翼 pivot 里，随翅膀折叠一起动，不会和线框脱节；
+ *  3) 少一条独立的曲线几何，也不需要给 z 方向鼓包。
+ *
+ * 只维护一个实例（同一时刻最多一条路）：切换目标时把它 reparent 到对应翼的 pivot。
+ * ghost 与 active 两条线都预建好、靠 visible 切换；粒子用**一个** Points（6 顶点）。
  */
 import * as THREE from "three";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
@@ -10,33 +16,46 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 
+import { WING_SPEC, type WingQuadrant } from "./butterfly-scene";
 import { MODULE_NODES, type NodeId } from "../nodes";
-import { fractionToDesignPx, toWorld, toWorldSize } from "./design-space";
+import { parsePath, type Pt } from "./wing-geometry";
+import { toWorldSize } from "./design-space";
 import { createFlowDot } from "./glow-texture";
-
 export type LightPathState = "off" | "ghost" | "active" | "dissolving";
 
 const PARTICLE_COUNT = 6;
 const SAMPLES = 56;
+/** 贴在脉络前方一点，避免和三层 Tube 打架 */
+const PATH_Z = 0.18;
+
+/** 每个节点贴着哪条主脉（索引指向 WING_SPEC.main） */
+const NODE_VEIN: Record<NodeId, { kind: "fore" | "hind"; index: number }> = {
+  problem: { kind: "fore", index: 1 },
+  knowledge: { kind: "fore", index: 1 },
+  cases: { kind: "hind", index: 0 },
+  sandbox: { kind: "hind", index: 0 },
+};
 
 export type LightPath = {
+  /** 由调用方决定挂在哪（本实现会自己 reparent 到对应翼的 pivot） */
   object: THREE.Group;
   setTarget(node: NodeId | null): void;
   update(dt: number, state: LightPathState): void;
   dispose(): void;
 };
 
-export function createLightPath(resolution: THREE.Vector2): LightPath {
+export function createLightPath(
+  resolution: THREE.Vector2,
+  wings: Record<WingQuadrant, THREE.Group>,
+): LightPath {
   const group = new THREE.Group();
   group.visible = false;
   group.renderOrder = 4;
 
-  const coreWorld = new THREE.Vector3(...toWorld(720, 486));
-
-  let curve: THREE.CubicBezierCurve3 | null = null;
+  let curve: THREE.CatmullRomCurve3 | null = null;
   let flow = 0;
+  let currentParent: THREE.Group | null = null;
 
-  /* 两个线型都建好，按状态切换 visible */
   const ghostMaterial = new LineMaterial({
     color: 0x38bdf8,
     transparent: true,
@@ -90,21 +109,23 @@ export function createLightPath(resolution: THREE.Vector2): LightPath {
   particles.frustumCulled = false;
   group.add(particles);
 
-  function rebuildGeometry() {
+  /** 设计坐标（绝对）→ 该翼 pivot 的局部坐标 */
+  const local = (p: Pt, hinge: Pt): THREE.Vector3 => {
+    const dx = (p[0] - hinge[0]) / 100;
+    const dy = -(p[1] - hinge[1]) / 100;
+    return new THREE.Vector3(dx, dy, PATH_Z);
+  };
+
+  function rebuild() {
     if (!curve) {
-      ghostLine.visible = false;
-      activeLine.visible = false;
-      particles.visible = false;
+      group.visible = false;
       return;
     }
 
-    /* 实线：整条曲线 */
-    activeGeometry.setPositions(
-      curve.getSpacedPoints(SAMPLES).flatMap((p) => [p.x, p.y, p.z]),
-    );
-
-    /* 虚线：按采样点的奇偶段切，视觉上就是均匀虚线，省掉 3D 版的弧长 dash 实现 */
     const points = curve.getSpacedPoints(SAMPLES);
+    activeGeometry.setPositions(points.flatMap((p) => [p.x, p.y, p.z]));
+
+    /* 虚线：按采样点每 3 段亮 1 段，视觉上就是均匀虚线 */
     const pairs: number[] = [];
     for (let i = 1; i < points.length; i += 1) {
       if (Math.floor((i - 1) / 3) % 2 !== 0) continue;
@@ -124,21 +145,33 @@ export function createLightPath(resolution: THREE.Vector2): LightPath {
         group.visible = false;
         return;
       }
-      const node = MODULE_NODES.find((item) => item.id === nodeId);
-      if (!node) return;
 
-      const [px, py] = fractionToDesignPx(node.x, node.y);
-      const end = new THREE.Vector3(...toWorld(px, py));
-      const mid = coreWorld.clone().lerp(end, 0.5);
-      /* 朝镜头鼓一点，光路才有"从屏幕里穿出来"的厚度 */
-      mid.z += 0.35;
-      curve = new THREE.CubicBezierCurve3(
-        coreWorld.clone(),
-        coreWorld.clone().lerp(mid, 0.6),
-        end.clone().lerp(mid, 0.6),
-        end,
-      );
-      rebuildGeometry();
+      const node = MODULE_NODES.find((item) => item.id === nodeId);
+      const mapping = NODE_VEIN[nodeId];
+      if (!node || !mapping) return;
+
+      const spec = WING_SPEC[mapping.kind];
+      const hinge = spec.hinge;
+      const vein = spec.main[mapping.index] ?? spec.main[0];
+      if (!vein) return;
+
+      /* 起点取核心在翼局部坐标里的位置，让它读起来是"从能量核出发"，
+         然后立刻接入那条主脉 —— 中间没有另造的曲线。 */
+      const coreLocal = local([720, 486], hinge);
+      const veinPoints = (parsePath(vein)[0] ?? []).map((p) => local(p, hinge));
+      curve = new THREE.CatmullRomCurve3([coreLocal, ...veinPoints], false, "catmullrom", 0.4);
+
+      /* reparent：光路必须挂在翼 pivot 里，才会跟着折叠一起动 */
+      const quadrant = `${node.side}${mapping.kind === "fore" ? "Top" : "Bottom"}` as WingQuadrant;
+      const target = wings[quadrant];
+      if (target && target !== currentParent) {
+        currentParent = target;
+        target.add(group);
+      }
+      /* 左翼靠 pivot 的负缩放镜像，局部坐标与右翼完全一致；
+         核心在镜像轴上，它的局部 x 两侧相同，所以不需要手动再翻一次。 */
+
+      rebuild();
       flow = 0;
     },
 
@@ -159,7 +192,6 @@ export function createLightPath(resolution: THREE.Vector2): LightPath {
         return;
       }
 
-      /* 流动方向：激活时核心→节点，溶解时原地反向并淡出 */
       const direction = state === "dissolving" ? -1 : 1;
       flow = (flow + (dt * direction) / 1.6 + 1) % 1;
 
@@ -175,7 +207,6 @@ export function createLightPath(resolution: THREE.Vector2): LightPath {
         activeMaterial.opacity = 0.85;
         particleMaterial.opacity = 0.95;
       } else {
-        /* 溶解：线先暗下去，粒子跟着回流淡出 */
         activeMaterial.opacity = Math.max(0, activeMaterial.opacity - dt * 2.2);
         particleMaterial.opacity = Math.max(0, particleMaterial.opacity - dt * 1.6);
       }
