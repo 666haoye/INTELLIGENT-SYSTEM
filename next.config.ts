@@ -1,14 +1,18 @@
 import type { NextConfig } from "next";
 
-/* 代理进程的可达地址。默认与本地一致（同机 8787）。
+/* 代理进程的可达地址。默认与本地一致（同机 8787），云端通常不用设。
  *
  * 绝对不要在这里读 process.env.PORT：Next 会把自身的启动端口（-p 8899 / 平台注入的
  * PORT）写进自己的进程环境，用它当代理端口会让 /chat 转发回 Next 自己，形成自我循环
  * ——表现为 500 + 日志里的 "Failed to proxy ... socket hang up"。
- * 云端若把代理跑在别的端口，请显式设置 COZE_PROXY_ORIGIN，例如
- *   COZE_PROXY_ORIGIN=http://127.0.0.1:8000
+ *
+ * 扣子托管不允许自定义变量以 COZE_ 开头，所以 MY_COZE_PROXY_ORIGIN 优先，
+ * 原名 COZE_PROXY_ORIGIN 作为本地兼容。
  */
-const PROXY_ORIGIN = process.env.COZE_PROXY_ORIGIN ?? "http://127.0.0.1:8787";
+const PROXY_ORIGIN =
+  process.env.MY_COZE_PROXY_ORIGIN ??
+  process.env.COZE_PROXY_ORIGIN ??
+  "http://127.0.0.1:8787";
 
 /* rewrite 转发的存活时长，必须严格大于代理自身的轮询上限（coze-proxy.mjs 的
  * POLL_TIMEOUT_MS = 35 秒）。Next 给 rewrite 转发设的默认超时是 30 秒

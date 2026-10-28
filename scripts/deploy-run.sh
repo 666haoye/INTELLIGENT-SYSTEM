@@ -17,8 +17,13 @@ if [ -z "${PORT:-}" ]; then
   echo "[deploy-run] 警告：平台没有注入 PORT，next start 会退回 3000，大概率对不上网关。" >&2
 fi
 
-echo "[deploy-run] PORT=${PORT:-未设置} 代理内部端口=${COZE_PROXY_PORT:-8787} rewrite 目标=${COZE_PROXY_ORIGIN:-http://127.0.0.1:8787}"
-echo "[deploy-run] 凭证：COZE_PAT=$([ -n "${COZE_PAT:-}" ] && echo 已注入 || echo 缺失) COZE_BOT_ID=${COZE_BOT_ID:-缺失}"
+# 扣子托管不允许变量以 COZE_ 开头，云端配的是 MY_COZE_*；这里按同样的优先级探测，
+# 免得日志一句「凭证缺失」把人带去查本来就已经配好的环境变量面板。
+pat_state=$([ -n "${MY_COZE_PAT:-${COZE_PAT:-}}" ] && echo 已注入 || echo 缺失)
+bot_state=$([ -n "${MY_COZE_BOT_ID:-${COZE_BOT_ID:-}}" ] && echo 已注入 || echo 缺失)
+
+echo "[deploy-run] PORT=${PORT:-未设置} 代理内部端口=${MY_COZE_PROXY_PORT:-${COZE_PROXY_PORT:-8787}} rewrite 目标=${MY_COZE_PROXY_ORIGIN:-${COZE_PROXY_ORIGIN:-http://127.0.0.1:8787}}"
+echo "[deploy-run] 凭证（MY_COZE_ 优先，回退 COZE_）：PAT=$pat_state BOT_ID=$bot_state"
 
 # exec：让 concurrently 顶替 bash 成为这个 shell 的进程，平台停服时信号能直接到位。
 exec npm run start:all

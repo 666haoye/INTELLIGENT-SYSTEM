@@ -6,7 +6,7 @@
  * 3) PAT 只存在于本进程，浏览器永远拿不到
  *
  * 用法： npm run proxy
- *       COZE_MOCK=1 node scripts/coze-proxy.mjs   // 不打上游，返回协议样例，用于验 UI
+ *       MY_COZE_MOCK=1 node scripts/coze-proxy.mjs  // 不打上游，返回协议样例，用于验 UI
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -15,16 +15,24 @@ import https from "node:https";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+
+/* 扣子应用托管不允许自定义环境变量以 COZE_ 开头，所以云端用的是 MY_COZE_*；
+   本地 .env.local 与既有习惯仍是 COZE_*。优先读 MY_ 前缀，读不到再退回原名，
+   两边都不用改配置。 */
+function envAny(name) {
+  return process.env["MY_" + name] ?? process.env[name];
+}
+
 /* 代理只监听回环地址即可：在 start:all 组合模式下，是 Next 通过 rewrite 在
    容器内部转发给它，公网入口始终是 Next 那一侧。保持 127.0.0.1 反而更安全
    ——代理本身带你的 PAT 且无鉴权，不该直接暴露到网卡。
-   仅当代理与 Next 分处不同容器/主机时，才需要设 COZE_PROXY_HOST=0.0.0.0。 */
-const HOST = process.env.COZE_PROXY_HOST ?? "127.0.0.1";
+   仅当代理与 Next 分处不同容器/主机时，才需要设 MY_COZE_PROXY_HOST=0.0.0.0。 */
+const HOST = envAny("COZE_PROXY_HOST") ?? "127.0.0.1";
 /* 刻意不读 process.env.PORT！
    平台注入的 PORT 属于对外服务进程（next start）。代理若也读它，两者会抢同一端口，
-   后起的那个直接 EADDRINUSE。内部端口固定 8787，需要改时显式设 COZE_PROXY_PORT，
-   并同步设置 next.config.ts 的 COZE_PROXY_ORIGIN。 */
-const PORT = Number(process.env.COZE_PROXY_PORT ?? 8787);
+   后起的那个直接 EADDRINUSE。内部端口固定 8787，需要改时显式设 MY_COZE_PROXY_PORT，
+   并同步设置 next.config.ts 的 rewrite 目标。 */
+const PORT = Number(envAny("COZE_PROXY_PORT") ?? 8787);
 const COZE_HOST = "api.coze.cn";
 const POLL_INTERVAL_MS = 800;
 /* 35s：实测正常回答 15-17s，偶发长答会顶到 24s，25s 的余量太薄。
@@ -55,9 +63,9 @@ function loadEnvFile(filePath) {
 }
 
 const fileEnv = loadEnvFile(path.join(ROOT, ".env.local"));
-const PAT = process.env.COZE_PAT ?? fileEnv.COZE_PAT ?? "";
-const BOT_ID = process.env.COZE_BOT_ID ?? fileEnv.COZE_BOT_ID ?? "";
-const MOCK = (process.env.COZE_MOCK ?? fileEnv.COZE_MOCK ?? "") === "1";
+const PAT = envAny("COZE_PAT") ?? fileEnv.COZE_PAT ?? "";
+const BOT_ID = envAny("COZE_BOT_ID") ?? fileEnv.COZE_BOT_ID ?? "";
+const MOCK = (envAny("COZE_MOCK") ?? fileEnv.COZE_MOCK ?? "") === "1";
 const USER_ID = "zj-web-" + crypto.randomUUID();
 
 const MOCK_REPLY = [
@@ -206,7 +214,7 @@ async function runChat(text, conversationId) {
 
   const created = await cozeRequest("POST", "/v3/chat", requestBody);
   if (created.status === 401 || created.status === 403) {
-    return fail("config", "PAT 无效或已过期，请更新 .env.local 里的 COZE_PAT");
+    return fail("config", "PAT 无效或已过期，请更新本地 .env.local 的 COZE_PAT / 云端 MY_COZE_PAT");
   }
   if (created.status === 429) {
     return fail("rate", "扣子接口限流，请稍后再试");
@@ -311,7 +319,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(
         res,
         502,
-        fail("config", "服务端未配置 COZE_PAT / COZE_BOT_ID，请在平台环境变量面板补上"),
+        fail("config", "服务端未配置凭证（云端 MY_COZE_PAT / MY_COZE_BOT_ID，本地 .env.local），请补上后重启"),
       );
       return;
     }
@@ -342,7 +350,7 @@ const server = http.createServer(async (req, res) => {
 server.on("error", (error) => {
   if (error.code === "EADDRINUSE") {
     console.error(
-      "[coze-proxy] 端口 " + PORT + " 已被占用，请先关掉旧进程，或用 COZE_PROXY_PORT 换端口。",
+      "[coze-proxy] 端口 " + PORT + " 已被占用，请先关掉旧进程，或用 MY_COZE_PROXY_PORT 换端口。",
     );
     process.exit(1);
   }
@@ -358,8 +366,8 @@ if (!MOCK && (!PAT || !BOT_ID)) {
     [
       "[coze-proxy] 警告：缺少凭证，AI 接口将返回 config 错误（站点其余部分不受影响）。",
       "本地：在项目根目录 .env.local 写入 COZE_PAT / COZE_BOT_ID；",
-      "云端：在平台的环境变量面板配置同名两项（.env.local 不会进版本库，云端也不会有）。",
-      "只想验 UI：COZE_MOCK=1 node scripts/coze-proxy.mjs",
+      "云端：在平台环境变量面板配置 MY_COZE_PAT / MY_COZE_BOT_ID（平台不允许以 COZE_ 开头）。",
+      "只想验 UI：MY_COZE_MOCK=1 node scripts/coze-proxy.mjs",
     ].join("\n"),
   );
 }
