@@ -93,7 +93,6 @@ select:focus-visible {
   animation-play-state: paused !important;
 }
 
-.is-static .flow-packet,
 .is-static .trails-canvas {
   opacity: 0 !important;
 }
@@ -106,8 +105,7 @@ select:focus-visible {
   animation: none !important;
 }
 
-.is-quiet .trails-canvas,
-.is-quiet .flow-packet {
+.is-quiet .trails-canvas {
   opacity: 0 !important;
 }
 
@@ -225,19 +223,28 @@ select:focus-visible {
   }
 }
 
-.butterfly-svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
+/* 旗舰档有相机环绕运镜，容器再自己浮动就是两种运动叠加，看着会晕。
+   节能档相机固定，保留这个漂移当「极缓慢上下浮动」。 */
+.is-flagship .butterfly-float {
+  animation: none;
+}
+
+
+/* Three.js 层：占满 .butterfly-float，压在 LinkNetwork(z-2) 与 wing-node-layer(z-3) 之下。
+   pointer-events:none 是硬性要求——四个节点和中心球都是 DOM，3D 不能抢点击。 */
+.butterfly-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   pointer-events: none;
 }
 
-.butterfly-svg path,
-.butterfly-svg circle,
-.butterfly-svg ellipse {
-  vector-effect: non-scaling-stroke;
+.butterfly-canvas__gl {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
+
 
 /* Knowledge-association network between wing nodes (below the node layer). */
 .link-network {
@@ -279,318 +286,6 @@ select:focus-visible {
   opacity: 0.1;
 }
 
-.wing-lines,
-.wing-glows {
-  transition: opacity calc(480ms * var(--tempo)) ease;
-}
-
-.wing-glows {
-  opacity: 0.9;
-}
-
-.wing-lines {
-  opacity: 0.96;
-}
-
-.butterfly-svg[data-hovered="left"] .wing--left .wing-lines,
-.butterfly-svg[data-hovered="right"] .wing--right .wing-lines {
-  opacity: 1;
-}
-
-.butterfly-svg[data-hovered="left"] .wing--left .wing-glows,
-.butterfly-svg[data-hovered="right"] .wing--right .wing-glows {
-  opacity: 1;
-}
-
-.wing-outline {
-  fill: none;
-  stroke: url(#wingStroke);
-  stroke-width: 1.5;
-  stroke-linejoin: round;
-}
-
-.wing-inner {
-  fill: none;
-  stroke: rgba(125, 211, 252, 0.38);
-  stroke-width: 0.9;
-  stroke-linejoin: round;
-}
-
-.vein-glow path {
-  fill: none;
-  stroke: #1d4ed8;
-  stroke-width: 3.4;
-  opacity: 0.09;
-}
-
-.vein {
-  fill: none;
-  stroke: #7dd3fc;
-  stroke-width: 0.8;
-  stroke-linecap: round;
-  opacity: 0.6;
-}
-
-.vein--fine {
-  stroke-width: 0.55;
-  opacity: 0.35;
-}
-
-.vein--cell {
-  stroke-dasharray: 3 5;
-  opacity: 0.45;
-}
-
-.vein--bright {
-  stroke: #d8fbff;
-  stroke-width: 0.95;
-  opacity: 0.75;
-}
-
-/* A light trail reached a wing node: one soft glow wave travels the main veins. */
-.wing.is-conducting .wing-glows {
-  animation: wing-conduct 1.4s ease-out both;
-}
-
-.wing.is-conducting .vein-glow path {
-  animation: vein-conduct 1.4s ease-out both;
-}
-
-.wing.is-conducting .vein--bright {
-  animation: vein-bright-conduct 1.4s ease-out both;
-}
-
-@keyframes wing-conduct {
-  0%,
-  100% {
-    opacity: 0.9;
-  }
-  34% {
-    opacity: 1;
-  }
-}
-
-@keyframes vein-conduct {
-  0% {
-    opacity: 0.09;
-  }
-  30% {
-    opacity: 0.62;
-  }
-  100% {
-    opacity: 0.09;
-  }
-}
-
-@keyframes vein-bright-conduct {
-  0%,
-  100% {
-    opacity: 0.75;
-  }
-  30% {
-    opacity: 1;
-  }
-}
-
-.wing-sparks circle {
-  fill: #d8fbff;
-  opacity: 0.48;
-}
-
-.wing-currents path {
-  fill: none;
-  stroke: #e0fcff;
-  stroke-width: 1;
-  stroke-linecap: round;
-  stroke-dasharray: 2 14;
-  opacity: 0.38;
-}
-
-/* the moving packets themselves are positioned from Butterfly.tsx */
-.flow-sources {
-  fill: none;
-  stroke: none;
-}
-
-.flow-packet {
-  pointer-events: none;
-}
-
-.socket-ring {
-  fill: none;
-  stroke: rgba(125, 211, 252, 0.4);
-  stroke-width: 0.8;
-  stroke-dasharray: 1.5 6.5;
-}
-
-.socket-ring--outer {
-  opacity: 0.85;
-}
-
-.socket-cross {
-  fill: none;
-  stroke: rgba(125, 211, 252, 0.4);
-  stroke-width: 0.8;
-}
-
-.body-glow {
-  fill: none;
-  stroke: #1d4ed8;
-  stroke-width: 11;
-  opacity: 0.16;
-}
-
-.body-line {
-  fill: none;
-  stroke: rgba(160, 229, 255, 0.68);
-  stroke-width: 1.1;
-  stroke-linejoin: round;
-}
-
-.body-line--fine {
-  stroke-width: 0.6;
-  opacity: 0.3;
-}
-
-.body-ribs {
-  fill: none;
-  stroke: rgba(125, 211, 252, 0.28);
-  stroke-width: 0.6;
-  stroke-linecap: round;
-}
-
-.head-line {
-  fill: none;
-  stroke: rgba(200, 248, 255, 0.7);
-  stroke-width: 0.9;
-}
-
-.head-dot {
-  fill: #d8fbff;
-}
-
-.antenna-line {
-  fill: none;
-  stroke: rgba(160, 229, 255, 0.7);
-  stroke-width: 0.95;
-  stroke-linecap: round;
-}
-
-.antenna-tip {
-  fill: #d8fbff;
-}
-
-.antenna--left .antenna-sway {
-  animation: antenna-sway-left calc(9s * var(--tempo)) ease-in-out infinite;
-}
-
-.antenna--right .antenna-sway {
-  animation: antenna-sway-right calc(10.5s * var(--tempo)) ease-in-out infinite;
-  animation-delay: -3.4s;
-}
-
-@keyframes antenna-sway-left {
-  0%,
-  100% {
-    transform: rotate(1.2deg);
-  }
-  42% {
-    transform: rotate(-1.6deg);
-  }
-  72% {
-    transform: rotate(0.2deg);
-  }
-}
-
-@keyframes antenna-sway-right {
-  0%,
-  100% {
-    transform: rotate(-1deg);
-  }
-  38% {
-    transform: rotate(1.5deg);
-  }
-  70% {
-    transform: rotate(-0.3deg);
-  }
-}
-
-.energy-core {
-  pointer-events: none;
-}
-
-.core-aura {
-  opacity: calc(var(--glow) * 0.95);
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: core-aura calc(7s * var(--tempo)) ease-in-out infinite;
-}
-
-@keyframes core-aura {
-  0%,
-  100% {
-    transform: scale(0.92);
-  }
-  50% {
-    transform: scale(1.06);
-  }
-}
-
-.core-beam {
-  opacity: calc(var(--glow) * 0.85);
-}
-
-.core-beam--soft {
-  opacity: calc(var(--glow) * 0.34) !important;
-}
-
-.core-pulse {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: core-pulse calc(5.4s * var(--tempo)) ease-in-out infinite;
-}
-
-@keyframes core-pulse {
-  0%,
-  100% {
-    transform: scale(0.93);
-  }
-  50% {
-    transform: scale(1.07);
-  }
-}
-
-.core-ring {
-  fill: none;
-  stroke: rgba(160, 235, 255, 0.58);
-  stroke-width: 0.9;
-}
-
-.core-ring--outer {
-  stroke-dasharray: 2 6;
-  opacity: 0.9;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: core-ring-spin calc(32s * var(--tempo)) linear infinite;
-}
-
-.core-ring--hot {
-  stroke: rgba(236, 254, 255, 0.72);
-  stroke-width: 0.7;
-}
-
-@keyframes core-ring-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.core-rays path {
-  fill: none;
-  stroke: rgba(200, 246, 255, 0.55);
-  stroke-width: 0.85;
-  stroke-linecap: round;
-}
 
 /* ==========================================================
    Layer 4 · HTML nodes
@@ -632,147 +327,25 @@ select:focus-visible {
   transform: translate(-50%, -50%) scale(1.07);
 }
 
-.wing-node__orbit {
-  position: absolute;
-  inset: 2%;
-  border: 1px dashed rgba(160, 235, 255, 0.52);
-  border-radius: 50%;
-  animation: node-orbit calc(34s * var(--tempo)) linear infinite;
-}
 
-.wing-node__orbit::before {
-  content: "";
-  position: absolute;
-  top: -2px;
-  left: 50%;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: #bff7ff;
-  box-shadow: 0 0 10px rgba(125, 211, 252, 0.9);
-  transform: translateX(-50%);
-}
 
-@keyframes node-orbit {
-  to {
-    transform: rotate(360deg);
-  }
-}
 
-.wing-node__halo {
-  position: absolute;
-  inset: 9%;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(160, 243, 255, 0.48) 0%,
-    rgba(56, 189, 248, 0.24) 36%,
-    rgba(29, 78, 216, 0.06) 64%,
-    transparent 74%
-  );
-  opacity: calc(var(--glow) * 0.96);
-  transform-origin: center;
-  transition: opacity 240ms ease;
-  animation: node-breathe calc(6.4s * var(--tempo)) ease-in-out infinite;
-}
 
-@keyframes node-breathe {
-  0%,
-  100% {
-    transform: scale(0.88);
-  }
-  50% {
-    transform: scale(1.08);
-  }
-}
 
-.wing-node__ring {
-  position: absolute;
-  inset: 28%;
-  border: 1px solid rgba(210, 249, 255, 0.68);
-  border-radius: 50%;
-  box-shadow:
-    0 0 24px rgba(56, 189, 248, 0.3),
-    inset 0 0 14px rgba(56, 189, 248, 0.18);
-  transition: transform calc(320ms * var(--tempo)) var(--ease-out);
-}
 
-.wing-node__core {
-  position: absolute;
-  inset: 38%;
-  border-radius: 50%;
-  background: radial-gradient(circle at 38% 32%, #ffffff 0%, #e8feff 42%, #7dd3fc 72%, #2563eb 100%);
-  box-shadow:
-    0 0 22px rgba(160, 243, 255, 0.9),
-    0 0 48px rgba(37, 99, 235, 0.5);
-  transition: transform calc(320ms * var(--tempo)) var(--ease-out);
-}
 
-.wing-node__flare {
-  position: absolute;
-  inset: 18%;
-  border: 1px solid rgba(160, 243, 255, 0.85);
-  border-radius: 50%;
-  opacity: 0;
-  pointer-events: none;
-}
 
-.wing-node__guide {
-  position: absolute;
-  inset: 5%;
-  border: 1px solid rgba(125, 211, 252, 0.5);
-  border-radius: 50%;
-  opacity: 0;
-  transform: scale(0.9);
-  pointer-events: none;
-  transition:
-    opacity 600ms ease,
-    transform 600ms ease;
-}
 
-.wing-node.is-armed .wing-node__guide {
-  opacity: 0.8;
-  transform: scale(1);
-  animation: guide-breathe calc(3.6s * var(--tempo)) ease-in-out infinite;
-}
 
 /* Static / quiet degradation: every node keeps a faint standing guide ring. */
-.is-static .wing-node__guide,
-.is-quiet .wing-node__guide {
-  opacity: 0.5;
-  transform: scale(1);
-}
 
-@keyframes guide-breathe {
-  0%,
-  100% {
-    transform: scale(0.98);
-    opacity: 0.5;
-  }
-  50% {
-    transform: scale(1.07);
-    opacity: 0.92;
-  }
-}
 
 .wing-node.is-near {
   transform: translate(-50%, -50%) scale(1.045);
 }
 
-.wing-node.is-near .wing-node__ring {
-  transform: scale(1.1);
-}
 
-.wing-node.is-near .wing-node__core {
-  transform: scale(1.14);
-  box-shadow:
-    0 0 30px rgba(160, 243, 255, 1),
-    0 0 66px rgba(37, 99, 235, 0.62);
-}
 
-.wing-node.is-near .wing-node__halo {
-  opacity: 1;
-}
 
 .wing-node.is-lit {
   transform: translate(-50%, -50%) scale(1.05);
@@ -808,20 +381,7 @@ select:focus-visible {
   transform: translate(-50%, 0) scale(1.03);
 }
 
-.wing-node:hover .wing-node__core,
-.wing-node:focus-visible .wing-node__core {
-  transform: scale(1.16);
-}
 
-.wing-node:hover .wing-node__ring,
-.wing-node:focus-visible .wing-node__ring {
-  transform: scale(1.16);
-  border-color: rgba(216, 251, 255, 0.85);
-  box-shadow:
-    0 0 30px rgba(56, 189, 248, 0.42),
-    0 0 64px rgba(56, 189, 248, 0.18),
-    inset 0 0 16px rgba(56, 189, 248, 0.26);
-}
 
 .wing-node:focus-visible {
   outline: 1px solid rgba(186, 247, 255, 0.65);
@@ -829,71 +389,12 @@ select:focus-visible {
   border-radius: 50%;
 }
 
-.wing-node.is-lit .wing-node__flare {
-  animation: node-flare calc(900ms * var(--tempo)) cubic-bezier(0.16, 1, 0.3, 1);
-}
 
-.wing-node.is-lit .wing-node__core {
-  animation: node-core-flash calc(900ms * var(--tempo)) ease;
-}
 
-@keyframes node-flare {
-  0% {
-    transform: scale(0.7);
-    opacity: 0.85;
-  }
-  100% {
-    transform: scale(2.15);
-    opacity: 0;
-  }
-}
 
-@keyframes node-core-flash {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  32% {
-    transform: scale(1.5);
-  }
-  64% {
-    transform: scale(0.96);
-  }
-}
 
-.wing-node__ripples {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-}
 
-.wing-node__ripple {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: var(--node-size);
-  height: var(--node-size);
-  border: 1px solid rgba(103, 232, 249, 0.7);
-  border-radius: 50%;
-  box-shadow: 0 0 22px rgba(56, 189, 248, 0.24);
-  opacity: 0;
-  pointer-events: none;
-  animation: node-ripple calc(900ms * var(--tempo)) ease-out forwards;
-}
 
-@keyframes node-ripple {
-  0% {
-    transform: translate(-50%, -50%) scale(0.55);
-    opacity: 0.8;
-  }
-  100% {
-    transform: translate(-50%, -50%) scale(2.35);
-    opacity: 0;
-  }
-}
 
 /* ==========================================================
    Header / footer
@@ -1860,61 +1361,6 @@ select:focus-visible {
   }
 }
 
-@media (max-width: 640px) {
-  .site-header {
-    padding-inline: 18px;
-  }
-
-  /* Phones: the butterfly stays still; only the node pulse remains. */
-  .butterfly-float {
-    animation: none;
-  }
-
-  /* Lower guidance-animation frequency on phones. */
-  .wing-node__halo {
-    animation-duration: 9s;
-  }
-
-  .wing-node.is-armed .wing-node__guide {
-    animation-duration: 5.6s;
-  }
-
-  .core-hint {
-    top: 63%;
-    font-size: 9px;
-    letter-spacing: 0.22em;
-  }
-
-  .brand-tag {
-    display: none;
-  }
-
-  .brand-name {
-    font-size: 14px;
-    letter-spacing: 0.12em;
-  }
-
-  .control-button {
-    padding: 0 11px;
-    font-size: 10px;
-    letter-spacing: 0.1em;
-  }
-
-  .wing-node-anchor {
-    --node-size: 60px;
-  }
-
-  .wing-node__label {
-    opacity: 0.75;
-    font-size: 9px;
-    letter-spacing: 0.14em;
-  }
-
-  .footer-hint::before,
-  .footer-hint::after {
-    width: 12px;
-  }
-}
 
 @media (max-aspect-ratio: 1 / 1) {
   .butterfly-center {

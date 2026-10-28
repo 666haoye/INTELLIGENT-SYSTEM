@@ -82,15 +82,58 @@ function run() {
 
   html = html.replace(/@@CSS::([^@]+)@@/g, (_m, rel) => "<style>" + safeStyle(readAsset(rel)) + "</style>");
 
+  /* 记录 HTML 里已内联过的 chunk，下面补懒加载 chunk 时跳过，避免同一份代码出现两次 */
+  const inlined = new Set();
+
   /* Next 的 getAssetPrefix 会在启动时读 document.currentScript.src 并要求里面有 /_next/。
      内联脚本没有 src，因此给每个内联脚本挂一个合成 data-src，并把该读取改成
      优先取 data-src、以 location.href 为 base 解析（合成地址只是字符串，不会发起请求）。 */
-  html = html.replace(
-    /@@JS::([^@]+)@@/g,
-    (_m, rel) =>
-      `<script data-src="http://localhost/_next/${rel}">` +
-      safeScript(readAsset(rel)) +
-      "<\/script>",
+  html = html.replace(/@@JS::([^@]+)@@/g, (_m, rel) => {
+    inlined.add(rel);
+    return `<script data-src="http://localhost/_next/${rel}">` + safeScript(readAsset(rel)) + "<\/script>";
+  });
+
+  /* 懒加载 chunk（next/dynamic 的产物）不出现在 HTML 里，是 webpack 运行时注入 <script> 才取的。
+     file:// 下没有服务器，那一取就是 404 —— 表现为 3D 层永远不挂载，而残留检查也发现不了
+     （它只看 HTML 里的标签）。webpack 5 的 chunk 文件自身会往 self.webpackChunk_* 里 push，
+     runtime 初始化时重放这些条目，所以把它们也内联进来，__webpack_require__.e(chunkId)
+     就直接命中已安装的分片，不发任何请求。 */
+  const chunkFiles = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".js")) {
+        chunkFiles.push(path.relative(path.join(outDir, "_next"), full).split(path.sep).join("/"));
+      }
+    }
+  };
+  const chunksDir = path.join(outDir, "_next", "static", "chunks");
+  if (fs.existsSync(chunksDir)) walk(chunksDir);
+  const lazy = chunkFiles.filter((rel) => !inlined.has(rel));
+
+  if (lazy.length) {
+    /* 追加在 </body> 前：此时 runtime 已解析完，push 进来的模块会被它自己排队处理，
+       而水合要等这批脚本执行完才发生，不会抢在它们前面。
+       必须用函数型替换：压缩后的 JS 里会出现 $` / $& 这类序列，
+       字符串型替换会把它们展开成「匹配点之前的整段文档」，
+       表现为 chunk 被重复内联若干次、体积翻数倍、bootstrap 直接跑坏。 */
+    const tags = lazy
+      .map(
+        (rel) =>
+          `<script data-src="http://localhost/_next/${rel}">` + safeScript(readAsset(rel)) + "<\/script>",
+      )
+      .join("");
+    html = html.includes("</body>") ? html.replace("</body>", () => tags + "</body>") : html + tags;
+  }
+  console.log(
+    "[export] 懒加载 chunk 内联：" +
+      lazy.length +
+      " 个（HTML 直接引用 " +
+      inlined.size +
+      " 个，合计 " +
+      (lazy.length + inlined.size) +
+      "）",
   );
 
   let patched = 0;

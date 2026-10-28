@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import AssistantDock from "./AssistantDock";
-import Butterfly from "./Butterfly";
 import CaseLibraryPanel from "./CaseLibraryPanel";
 import FieldCanvas from "./FieldCanvas";
 import KnowledgePanel from "./KnowledgePanel";
@@ -17,6 +17,7 @@ import {
   readStoredFlag,
   shouldUseStaticFallback,
   writeStoredFlag,
+  type RenderTier,
 } from "@/lib/environment";
 import {
   MODULE_NODES,
@@ -28,6 +29,19 @@ import {
 import type { KnowledgeTarget } from "@/lib/question-search";
 
 const QUIET_KEY = "zj.next.quiet";
+
+/* Three.js 只在客户端加载：蝴蝶是纯装饰层，不能进首屏关键路径，
+   也不需要服务端渲染（SSR 下会直接渲染 loading 占位，这里是 null）。 */
+const ButterflyScene = dynamic(() => import("./ButterflyScene"), {
+  ssr: false,
+  loading: () => null,
+});
+
+type SceneApi = {
+  focus(node: NodeId): void;
+  beginReturn(): void;
+  skip(to: "locked" | "idle"): void;
+};
 
 function BrandMark() {
   return (
@@ -59,6 +73,9 @@ export default function HomeExperience() {
   const [isStatic, setIsStatic] = useState(false);
   const [pagePaused, setPagePaused] = useState(false);
   const [hoveredSide, setHoveredSide] = useState<WingSide | null>(null);
+  const [hoveredId, setHoveredId] = useState<NodeId | null>(null);
+  /* 档位由 3D 层判定后回传；null 表示还没定，此时不加 is-flagship */
+  const [renderTier, setRenderTier] = useState<RenderTier | null>(null);
   const [litPulse, setLitPulse] = useState<{ side: WingSide; key: number } | null>(null);
   /* Nodes activated by trails: their links light up until a panel opens. */
   const [armedIds, setArmedIds] = useState<NodeId[]>([]);
@@ -75,6 +92,9 @@ export default function HomeExperience() {
   const [trailCount, setTrailCount] = useState(4);
 
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const sceneApi = useRef<SceneApi | null>(null);
+  /* 点击后先记下要开哪个面板，等 3D 时序（推镜→光路→保持）走完再真的开 */
+  const pendingOpen = useRef<{ node: ModuleNode; trigger: HTMLButtonElement | null } | null>(null);
   const nodeRefs = useRef<Partial<Record<NodeId, HTMLButtonElement>>>({});
   const nodeTimers = useRef<Partial<Record<NodeId, number>>>({});
   const nearTimers = useRef<Partial<Record<NodeId, number>>>({});
@@ -194,10 +214,36 @@ export default function HomeExperience() {
     }, 520);
   }, []);
 
+  const handleHoverChange = useCallback((node: ModuleNode | null) => {
+    setHoveredSide(node?.side ?? null);
+    setHoveredId(node?.id ?? null);
+  }, []);
+
+  /* 点击节点：不立刻开面板，先点亮 3D 的聚焦时序（约 1.3s），到位后才转场 */
+  const requestOpen = useCallback((node: ModuleNode, trigger: HTMLButtonElement | null) => {
+    if (pendingOpen.current) return;
+    pendingOpen.current = { node, trigger };
+    sceneApi.current?.focus(node.id);
+  }, []);
+
+  const handleTransitionReady = useCallback((nodeId: NodeId) => {
+    const pending = pendingOpen.current;
+    pendingOpen.current = null;
+    if (!pending || pending.node.id !== nodeId) return;
+    /* 延后到这里才执行原有关面板逻辑：inert、焦点回归都不变 */
+    openPanelRef.current?.(pending.node, pending.trigger);
+  }, []);
+
+  /* openPanel 在下面定义，用 ref 避免把 transition 回调卷进它的依赖 */
+  const openPanelRef = useRef<((node: ModuleNode, trigger: HTMLButtonElement | null) => void) | null>(
+    null,
+  );
+
   const openPanel = useCallback(
     (node: ModuleNode, trigger: HTMLButtonElement | null) => {
       lastTriggerRef.current = trigger;
       setHoveredSide(null);
+      setHoveredId(null);
       setKnowledgeTarget(null);
       setKnowledgeFromProblem(false);
       if (node.id === "problem") setProblemReturnQuery("");
@@ -211,8 +257,11 @@ export default function HomeExperience() {
     },
     [],
   );
+  openPanelRef.current = openPanel;
 
   const closePanel = useCallback(() => {
+    /* 面板立即关，3D 在背后逆向收尾：拉回 → 光路溶解 → 重启呼吸 */
+    sceneApi.current?.beginReturn();
     setActiveId(null);
     setKnowledgeTarget(null);
     setKnowledgeFromProblem(false);
@@ -220,6 +269,8 @@ export default function HomeExperience() {
 
   const jumpToKnowledge = useCallback(
     (target: KnowledgeTarget, query: string) => {
+      /* 深链不走点击时序，直接落位，否则知识库跳转要被 choreography 卡 1.3s */
+      sceneApi.current?.skip("idle");
       setProblemReturnQuery(query);
       setKnowledgeTarget(target);
       setKnowledgeFromProblem(true);
@@ -232,12 +283,14 @@ export default function HomeExperience() {
      不置 knowledgeFromProblem，否则知识库会显示无意义的「返回问题」条，
      因此不能复用上面的 jumpToKnowledge。 */
   const openKnowledgeAt = useCallback((target: KnowledgeTarget) => {
+    sceneApi.current?.skip("idle");
     setKnowledgeTarget(target);
     setKnowledgeFromProblem(false);
     setActiveId("knowledge");
   }, []);
 
   const askAI = useCallback((text: string) => {
+    sceneApi.current?.skip("idle");
     setAiPrefill({ text, nonce: Date.now() });
     setAiDockOpen(true);
   }, []);
@@ -286,6 +339,8 @@ export default function HomeExperience() {
     isStatic ? "is-static" : "",
     pagePaused ? "is-paused" : "",
     activeId ? "is-panel-open" : "",
+    /* 旗舰档有环绕运镜，必须关掉 .butterfly-float 的 CSS 浮动，否则两种运动叠加会晕 */
+    renderTier === "flagship" ? "is-flagship" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -340,11 +395,17 @@ export default function HomeExperience() {
 
           <div className="butterfly-center">
             <div className="butterfly-float">
-              <Butterfly
+              <ButterflyScene
                 hoveredSide={hoveredSide}
+                hoveredId={hoveredId}
                 flowOn={stageFlowOn}
                 tempo={tempo}
                 litPulse={litPulse}
+                glow={quiet ? 0.55 : 1}
+                hardLock={isStatic || quiet}
+                onTierDecided={setRenderTier}
+                onTransitionReady={handleTransitionReady}
+                sceneApiRef={sceneApi}
               />
 
               <LinkNetwork armedIds={armedIds} compact={compact} />
@@ -354,8 +415,8 @@ export default function HomeExperience() {
                   <WingNode
                     key={node.id}
                     node={node}
-                    onOpen={openPanel}
-                    onHoverChange={setHoveredSide}
+                    onOpen={requestOpen}
+                    onHoverChange={handleHoverChange}
                     registerRef={registerNode}
                   />
                 ))}
