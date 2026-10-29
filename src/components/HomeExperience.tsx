@@ -84,6 +84,7 @@ export default function HomeExperience() {
   const [aiPrefill, setAiPrefill] = useState<{
     text: string;
     nonce: number;
+    auto?: boolean;
   } | null>(null);
   const [knowledgeTarget, setKnowledgeTarget] = useState<KnowledgeTarget | null>(null);
   const [knowledgeFromProblem, setKnowledgeFromProblem] = useState(false);
@@ -99,6 +100,12 @@ export default function HomeExperience() {
   const nearTimers = useRef<Partial<Record<NodeId, number>>>({});
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
   const hadPanelRef = useRef(false);
+  /**
+   * 面板关闭后我们把焦点还给原来的节点按钮。那是程序行为，不代表用户想 hover 这个节点 ——
+   * 期间置 true，让 `handleHoverChange` 把它吞掉。否则 3D 的 domHover 会被这次 focus 永久钉住，
+   * 射线说什么都压不回去（返回首页后"hover 不再推镜"就是这么来的）。
+   */
+  const restoringFocusRef = useRef(false);
 
   /* Load saved preferences, then auto-detect weak network / reduced motion. */
   useEffect(() => {
@@ -219,6 +226,7 @@ export default function HomeExperience() {
    * 放这里会让每次进出都触发整棵首页重渲染，却没有第二个消费者。
    */
   const handleHoverChange = useCallback((node: ModuleNode | null) => {
+    if (restoringFocusRef.current) return;
     sceneApi.current?.setDomHover(node);
   }, []);
 
@@ -268,33 +276,54 @@ export default function HomeExperience() {
     setKnowledgeFromProblem(false);
   }, []);
 
+  /**
+   * 深链绕过点击时序时，必须把在飞的 `pendingOpen` 一起作废。
+   * 它只在 `handleTransitionReady` 里清，而 `skip("idle")` 让那次 emit 永远不会发生 ——
+   * 留着它，`requestOpen` 开头的重入保护会把之后每次点节点都静默吞掉（只能刷新页面）。
+   */
+  const cancelPendingOpen = useCallback(() => {
+    pendingOpen.current = null;
+    sceneApi.current?.skip("idle");
+  }, []);
+
   const jumpToKnowledge = useCallback(
     (target: KnowledgeTarget, query: string) => {
       /* 深链不走点击时序，直接落位，否则知识库跳转要被 choreography 卡 1.3s */
-      sceneApi.current?.skip("idle");
+      cancelPendingOpen();
       setProblemReturnQuery(query);
       setKnowledgeTarget(target);
       setKnowledgeFromProblem(true);
       setActiveId("knowledge");
     },
-    [],
+    [cancelPendingOpen],
   );
 
   /* 通用「按定位目标打开知识库」入口：AI 助手与案例库共用。
      不置 knowledgeFromProblem，否则知识库会显示无意义的「返回问题」条，
      因此不能复用上面的 jumpToKnowledge。 */
-  const openKnowledgeAt = useCallback((target: KnowledgeTarget) => {
-    sceneApi.current?.skip("idle");
-    setKnowledgeTarget(target);
-    setKnowledgeFromProblem(false);
-    setActiveId("knowledge");
-  }, []);
+  const openKnowledgeAt = useCallback(
+    (target: KnowledgeTarget) => {
+      cancelPendingOpen();
+      setKnowledgeTarget(target);
+      setKnowledgeFromProblem(false);
+      setActiveId("knowledge");
+    },
+    [cancelPendingOpen],
+  );
 
-  const askAI = useCallback((text: string) => {
-    sceneApi.current?.skip("idle");
-    setAiPrefill({ text, nonce: Date.now() });
-    setAiDockOpen(true);
-  }, []);
+  /* nonce 用自增计数器而不是 Date.now()：同一毫秒内连点两次会撞 nonce，
+     AssistantDock 的去重逻辑会把第二次吞掉，表现为「点了没反应」。 */
+  const prefillSeq = useRef(0);
+
+  const askAI = useCallback(
+    (text: string, opts?: { auto?: boolean }) => {
+      cancelPendingOpen();
+      prefillSeq.current += 1;
+      setAiPrefill({ text, nonce: prefillSeq.current, auto: opts?.auto });
+      setAiDockOpen(true);
+    },
+    [cancelPendingOpen],
+  );
 
   const backToProblem = useCallback(() => {
     setKnowledgeTarget(null);
@@ -327,7 +356,13 @@ export default function HomeExperience() {
       const trigger = lastTriggerRef.current;
       window.requestAnimationFrame(() => {
         if (trigger && document.contains(trigger)) {
+          restoringFocusRef.current = true;
           trigger.focus({ preventScroll: true });
+          /* React 把 focus 当离散事件同步派发，同步清标记就够；
+             用微任务是为了将来它改成异步时这条护栏不会静默失效。 */
+          queueMicrotask(() => {
+            restoringFocusRef.current = false;
+          });
         }
       });
     }

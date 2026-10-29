@@ -79,6 +79,11 @@ wing.rotation.set(0, fold, 0)                  // 四翼同一个值，x/z 恒�
 
 - **hover 只有一个真相**：`hover-raycast.ts` 输出的"射线 ∪ DOM"并集（DOM 那一路只来自键盘
   `focus`/`blur`，标签在环下缘、射线打不到）。`WingNode` 不再用 `pointerenter/leave` 报 hover。
+- **DOM 那一路必须有失效机制**，否则一次 focus 留下的值会永久压住射线：`setPointer()` 一被调用就清掉
+  `domHover`（鼠标一动，键盘那一路让位）；面板关闭后归还原节点焦点属程序行为，不算 hover 输入
+  （`HomeExperience.restoringFocusRef` 屏蔽那一次 `onFocus`）。两条都缺时会出现"返回首页后 hover 失灵"：
+  `committed` 被钉在上一个节点、`leaveElapsed` 每帧清零所以 300ms 迟滞走不到，而相机停在推镜位姿上
+  又把其它节点的热区整体推离指针，故障自我强化，只有失焦（点空白处）能解锁。
 - 点击仍只认 DOM 按钮，键盘可达与无障碍语义不变；触屏不发 mouse/pen 的 `pointermove`，
   所以不会被"点一下"误推镜。
 - DOM 命中区同步放大：`.wing-node::after { inset: -20% }`（直径 ≈1.4×）。按钮本体投影
@@ -91,6 +96,8 @@ wing.rotation.set(0, fold, 0)                  // 四翼同一个值，x/z 恒�
 
 ```
 idle ──hover──▶ hover ──click──▶ locking ──(settle + 1.3s)──▶ locked ──返回──▶ returning ──▶ idle
+                                        ▲                          │
+                                        └────── click（可打断）─────┘
 ```
 
 | 阶段 | 相机 | 光路 | 粒子 | 翼 |
@@ -100,6 +107,12 @@ idle ──hover──▶ hover ──click──▶ locking ──(settle + 1.3
 | locking | lock | ghost → **active** | active 才有 | 立即冻结 |
 | locked | lock | active（α0.85） | 流动 | 冻结 |
 | returning | return | **dissolving**（反向淡出） | 反向回流 | 冻结 → 结束时归零重启 |
+
+**只有 `locking` 拒收新点击**（一次时序只认一个目标）。`returning` 可被新点击就地打断、直接转向新目标：
+返回只是收尾动画，"关一个马上点下一个"是正常意图。早先 returning 也一并忽略，于是点击被静默吞掉、
+状态机不会再 emit 转场，而调用方已经写上的 `pendingOpen` 只在 emit 时清理 —— 之后每次点击都被重入保护
+挡死，只能刷新页面。同理，三条深链（问题→知识库、`kb://` 跳转、问 AI）走 `skip('idle')` 时必须连带
+作废 `pendingOpen`（`HomeExperience.cancelPendingOpen`）。
 
 时钟（用户确认的压缩版，单次点击到面板打开实测约 **1.4s**）：
 

@@ -117,6 +117,11 @@ export function createHoverResolver(
     setPointer(clientX, clientY) {
       pointerX = clientX;
       pointerY = clientY;
+      /* 鼠标一动，键盘 focus 那一路立即作废。两个源不能同时持有 hover：
+         `pick()` 在射线打不中时会回落到 domHover，一次程序化 focus（面板关闭后把焦点还给
+         节点按钮）留下的值就永远压着射线说话，committed 出不去、leaveElapsed 每帧被清零，
+         300ms 迟滞这条唯一出口也走不到 —— 表现就是"返回首页后 hover 失灵"。 */
+      domHover = null;
     },
 
     clearPointer() {

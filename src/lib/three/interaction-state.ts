@@ -133,7 +133,11 @@ export function createInteractionMachine(
     },
 
     click(node) {
-      if (phase === "locking" || phase === "returning") return;
+      /* returning 可以被打断：返回只是一段收尾动画，用户在它跑的期间点下一个节点是正常意图。
+         原来这里连着 returning 一起忽略，于是点击被静默吞掉、状态机不会再 emit 转场，
+         而调用方（HomeExperience.requestOpen）已经把 pendingOpen 写上了 ——
+         那份 pending 永远等不到清理，之后所有节点点击全都被重入保护挡死。 */
+      if (phase === "locking") return;
       target = node;
       enter("locking");
       path = "ghost";
