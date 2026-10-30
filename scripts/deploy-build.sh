@@ -19,7 +19,11 @@ node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a
 
 # 只在真的缺包时才 npm ci：ci 会整目录重装，需要网络，且会把平台已装好的东西推倒重来。
 MISSING=""
-for pkg in next react react-dom tailwindcss @tailwindcss/postcss typescript concurrently; do
+# 探测列表必须覆盖「构建时真的会被 import 的包」，漏一个就会跳过安装、
+# 然后在 next build 里报 Module not found。three 与 R3F 三件套是首页深空层
+# 与 /lab/* 实验页的运行时依赖，加进来之前它们正好是漏的。
+for pkg in next react react-dom tailwindcss @tailwindcss/postcss typescript concurrently \
+           three @react-three/fiber @react-three/drei @react-three/postprocessing maath; do
   [ -d "node_modules/$pkg" ] || MISSING="$MISSING $pkg"
 done
 
