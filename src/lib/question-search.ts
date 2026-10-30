@@ -3,6 +3,7 @@ import {
   type SearchUnit,
   type StarterQuestion,
 } from "@/data/question-index";
+import { toCurrentTarget } from "@/lib/knowledge-links";
 
 export type KnowledgeTarget = {
   chapter: string;
@@ -482,6 +483,9 @@ export function searchKnowledge(input: string): SearchResponse {
 
     scored.push({
       ...doc.unit,
+      /* question-index.ts 是冻结的旧 169 编号快照，出口统一翻译到当前表编号，
+         免得消费方拿旧 id 去新表里撞上一张不相干的卡。详见 toCurrentTarget。 */
+      target: toCurrentTarget(doc.unit.target),
       score,
       matchedTerms: [...new Set(matchedTerms)].slice(0, 6),
     });

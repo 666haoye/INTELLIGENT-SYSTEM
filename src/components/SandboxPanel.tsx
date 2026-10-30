@@ -4,6 +4,7 @@ import {
   LAB_EXPERIMENTS,
   experimentHref,
 } from "@/data/experiments";
+import { lab3dHref } from "@/lib/lab3d/lab-routes";
 import PanelShell from "./PanelShell";
 
 type SandboxPanelProps = {
@@ -74,7 +75,7 @@ export default function SandboxPanel({ onClose }: SandboxPanelProps) {
           </div>
           <div>
             <b>{requiredCount}</b>
-            <span>教材明文要求</span>
+            <span>教材必做</span>
           </div>
           <div>
             <b>{LAB_EXPERIMENTS.length - requiredCount}</b>
@@ -97,43 +98,71 @@ export default function SandboxPanel({ onClose }: SandboxPanelProps) {
       <div className="sandbox-body">
         <p className="sandbox-note">
           点击任意实验卡片，在新标签页打开独立实验页；每页标注教材章节 ·
-          印刷页码 ·「教材明文要求」或「配套设计」。
+          印刷页码 ·「🏷️ 教材必做」或「配套设计」。带
+          <span className="sandbox-note-3d"> ✨ 3D 沉浸模式</span>
+          标记的实验最值得升级成 3D 场景，把鼠标移到卡片上可看到它的形态说明。
         </p>
 
         <div className="sandbox-grid">
-          {LAB_EXPERIMENTS.map((item, index) => (
-            <a
-              key={item.id}
-              className="sandbox-card"
-              href={experimentHref(item.id)}
-              target="_blank"
-              rel="noopener noreferrer"
-              {...(index === 0 ? { "data-panel-autofocus": "" } : {})}
-            >
-              <span className="sandbox-card-top">
-                <span className="sandbox-card-code">{item.code}</span>
-                <span
-                  className={
-                    "sandbox-card-tag" + (item.required ? " is-required" : "")
-                  }
+          {LAB_EXPERIMENTS.map((item, index) => {
+            /* 一张卡上有两个跳转目标（静态 2D 实验页 / React 3D 场景），而 `<a>` 里不能再套
+               `<a>` 或 `<button>` —— 交互式内容嵌套既不合法也让读屏犯迷糊。
+               所以卡片本体退回 `<div>`，主跳转用铺满整卡的 stretched link，
+               角标是自己的 `<a>`，靠 z-index 抢在整卡之前接住点击。 */
+            const href3d = lab3dHref(item.id);
+            return (
+              <div className="sandbox-card" key={item.id}>
+                <a
+                  className="sandbox-card-main"
+                  href={experimentHref(item.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={item.form}
+                  {...(index === 0 ? { "data-panel-autofocus": "" } : {})}
                 >
-                  {item.required ? "教材明文要求" : "配套设计"}
-                </span>
-              </span>
+                  <span className="sandbox-card-top">
+                    <span className="sandbox-card-code">{item.code}</span>
+                    <span
+                      className={
+                        "sandbox-card-tag" + (item.required ? " is-required" : "")
+                      }
+                    >
+                      {item.required ? "🏷️ 教材必做" : "配套设计"}
+                    </span>
+                  </span>
 
-              <span className="sandbox-card-title">{item.title}</span>
+                  <span className="sandbox-card-title">{item.title}</span>
 
-              <span className="sandbox-card-source">
-                {item.chapter} · 印刷页 P.{item.page}
-              </span>
+                  <span className="sandbox-card-source">
+                    {item.chapter} · 印刷页 P.{item.page}
+                  </span>
 
-              <span className="sandbox-card-purpose">{item.purpose}</span>
+                  <span className="sandbox-card-purpose">{item.purpose}</span>
 
-              <span className="sandbox-card-go" aria-hidden="true">
-                运行实验 <span className="sandbox-card-arrow">↗</span>
-              </span>
-            </a>
-          ))}
+                  <span className="sandbox-card-go" aria-hidden="true">
+                    运行实验 <span className="sandbox-card-arrow">↗</span>
+                  </span>
+                </a>
+
+                {item.threeD === "high" ? (
+                  href3d ? (
+                    <a
+                      className="sandbox-card-3d is-link"
+                      href={href3d}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`在新标签打开 ${item.code} 的 3D 沉浸场景`}
+                    >
+                      ✨ 3D 沉浸模式 <span aria-hidden="true">↗</span>
+                    </a>
+                  ) : (
+                    /* 适配度高但场景还没做出来：保留标签、不给链接，免得点出 404。 */
+                    <span className="sandbox-card-3d">✨ 3D 沉浸模式</span>
+                  )
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </div>
     </PanelShell>

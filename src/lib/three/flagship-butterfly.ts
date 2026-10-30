@@ -1,7 +1,7 @@
 /* 旗舰档：在已验证的节能档线框蝴蝶之上，叠出真正的立体结构。
  *
  * 做法是「组合」而不是「另写一套」：先拿 buildEcoButterfly() 的完整场景，
- * 再往每个翼 pivot 里塞翼膜与三层 Tube 脉络，替换能量核，加穹顶。
+ * 再往每个翼 pivot 里塞翼膜与三层 Tube 脉络，替换能量核。
  * 节点环两档共用，不在这里建（见 node-rings.ts）。
  * 这样线框细节（28 条细脉、虚线 cell、sparks）一行都不用重写，
  * 两档共用同一份几何数据，不会出现「改了旗舰档、节能档悄悄坏掉」的分叉。
@@ -12,7 +12,6 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { buildEcoButterfly, WING_SPEC, type ButterflyParts, type WingQuadrant } from "./butterfly-scene";
 import { CORE, cubicSegments, parsePath, type Pt } from "./wing-geometry";
 import { toWorldSize } from "./design-space";
-import { createDomeGrid } from "./glow-texture";
 
 /** 主脉三层排布：前后各 14 设计像素，中间层略微缩小制造视差 */
 const MAIN_LAYERS: Array<{ zPx: number; scale: number }> = [
@@ -224,24 +223,6 @@ function rebuildCore(parts: ButterflyParts) {
   });
 }
 
-/** 深空穹顶：BackSide 大球 + 内壁发光经纬网格，极慢自转 */
-function addDome(parts: ButterflyParts) {
-  const texture = createDomeGrid();
-  const geometry = new THREE.SphereGeometry(58, 24, 12);
-  const material = new THREE.MeshBasicMaterial({
-    map: texture,
-    side: THREE.BackSide,
-    transparent: true,
-    opacity: 0.38,
-    depthWrite: false,
-  });
-  parts.disposables.push(texture, geometry, material);
-  const dome = new THREE.Mesh(geometry, material);
-  dome.renderOrder = 0;
-  parts.dome = dome;
-  parts.root.add(mark(dome));
-}
-
 /** 两盏对向平行光负责「朝相机一侧亮冰蓝、背面暗紫」；节能档不挂灯 */
 export function createFlagshipLights(): THREE.Object3D[] {
   const key = new THREE.DirectionalLight(0x7dd3fc, 2.4);
@@ -258,7 +239,6 @@ export function buildFlagshipButterfly(resolution: THREE.Vector2): FlagshipBuild
 
   addMembraneAndTubes(parts);
   rebuildCore(parts);
-  addDome(parts);
 
   return { parts, lights: createFlagshipLights() };
 }

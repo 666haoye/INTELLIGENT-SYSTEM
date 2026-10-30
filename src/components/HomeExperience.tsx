@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import AssistantDock from "./AssistantDock";
 import CaseLibraryPanel from "./CaseLibraryPanel";
-import FieldCanvas from "./FieldCanvas";
 import KnowledgePanel from "./KnowledgePanel";
 import LinkNetwork from "./LinkNetwork";
 import PlaceholderPanel from "./PlaceholderPanel";
@@ -33,6 +32,13 @@ const QUIET_KEY = "zj.next.quiet";
 /* Three.js 只在客户端加载：蝴蝶是纯装饰层，不能进首屏关键路径，
    也不需要服务端渲染（SSR 下会直接渲染 loading 占位，这里是 null）。 */
 const ButterflyScene = dynamic(() => import("./ButterflyScene"), {
+  ssr: false,
+  loading: () => null,
+});
+
+/* 深空背景层同理：它自带一个 WebGL 上下文和 three 的整份代码，
+   服务端渲染不出来，客户端没准备好也不该挡住首屏。 */
+const SpaceCanvas = dynamic(() => import("./SpaceCanvas"), {
   ssr: false,
   loading: () => null,
 });
@@ -88,6 +94,8 @@ export default function HomeExperience() {
   } | null>(null);
   const [knowledgeTarget, setKnowledgeTarget] = useState<KnowledgeTarget | null>(null);
   const [knowledgeFromProblem, setKnowledgeFromProblem] = useState(false);
+  /* 知识库卡片上「📁 查看实战案例 Cxx」要点到的那一条案例（case-library 的 id，如 "c01"）。 */
+  const [caseTarget, setCaseTarget] = useState<string | null>(null);
   const [problemReturnQuery, setProblemReturnQuery] = useState("");
   const [trailCount, setTrailCount] = useState(4);
 
@@ -274,6 +282,9 @@ export default function HomeExperience() {
     setActiveId(null);
     setKnowledgeTarget(null);
     setKnowledgeFromProblem(false);
+    /* 不清掉的话，下次从全息节点直接点进案例库会带着上一次的选中项重新挂载，
+       落在旧案例而不是默认第一条。 */
+    setCaseTarget(null);
   }, []);
 
   /**
@@ -329,6 +340,18 @@ export default function HomeExperience() {
     setKnowledgeTarget(null);
     setKnowledgeFromProblem(false);
     setActiveId("problem");
+  }, []);
+
+  /* 知识库卡片底部的跳转。照 backToProblem 而不是 closePanel 写：
+     面板互换不该触发 3D 逆向收尾，那套编排是给"退回全息主页"用的。
+     也不走 cancelPendingOpen —— 这是面板内点击，pendingOpen 早在 handleTransitionReady
+     里清过了，跟 openKnowledgeAt 那种从 3D 外部打进来的深链不是一回事。
+     实验按钮不在这里：它直接 href 到 experiments/exp-eXX.html 新标签打开。 */
+  const openCaseFromKnowledge = useCallback((caseId: string) => {
+    setKnowledgeTarget(null);
+    setKnowledgeFromProblem(false);
+    setCaseTarget(caseId);
+    setActiveId("cases");
   }, []);
 
   /* Remove the page from the accessibility tree while a panel is open. */
@@ -390,7 +413,14 @@ export default function HomeExperience() {
     <div className={rootClass}>
       <div ref={contentRef} className="home-content">
         <div className="site-bg" aria-hidden="true" />
-        <FieldCanvas enabled={!stageStatic} />
+        {/* 深空背景层必须排在 site-bg 之后、site-vignette 之前：三者同为 z-index:0，
+            靠 DOM 顺序叠放，暗角要压在星点之上才保得住中心焦点。 */}
+        <SpaceCanvas
+          enabled={!isStatic}
+          quiet={quiet}
+          paused={pagePaused || Boolean(activeId)}
+          tier={renderTier}
+        />
         <div className="site-vignette" aria-hidden="true" />
 
         <TrailsCanvas
@@ -507,11 +537,13 @@ export default function HomeExperience() {
           <KnowledgePanel
             initialTarget={knowledgeTarget}
             onBackToProblem={knowledgeFromProblem ? backToProblem : undefined}
+            onOpenCase={openCaseFromKnowledge}
             onClose={closePanel}
           />
         ) : activeNode.mode === "cases" ? (
           <CaseLibraryPanel
             onClose={closePanel}
+            initialCaseId={caseTarget}
             onJumpToKnowledge={openKnowledgeAt}
             onAskAI={askAI}
           />

@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./knowledge-panel.css";
+import "./sandbox-panel.css";
 
 export const metadata: Metadata = {
   title: "智教系统 · 全息学习空间",

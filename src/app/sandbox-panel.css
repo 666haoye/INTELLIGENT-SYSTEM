@@ -1,0 +1,102 @@
+/* ==========================================================
+   实验沙盒 · 卡片角标
+   ==========================================================
+   刻意单独成文件，不写进 globals.css：那份文件同时载着案例博弈（CaseSaga）的样式，
+   由另一条工作线并行编辑。
+
+   两条纪律与 knowledge-panel.css 一致：
+   1. 只用 globals.css 里不存在的类名（.sandbox-card-main / .sandbox-card-3d / .sandbox-note-3d）。
+      globals.css:1 是 Tailwind v4，utilities 在 @layer utilities 里；本文件未分层，
+      对任何 utility 都是**无条件胜出**（与特异性无关），撞名会静默覆盖别处。
+   2. 要覆盖 globals.css 已有规则就靠特异度，不靠导入顺序 —— dev(webpack) 与 prod 的
+      CSS 产出顺序并不保证一致。`.sandbox-card-tag.is-required` 在 globals.css:2786 是
+      (0,2,0)，这里加 `.panel--sandbox` 前缀抬到 (0,3,0) 稳稳压过。
+   ========================================================== */
+
+/* 一张卡现在有两个跳转目标，所以卡片本体是 div、主链接是里面的 <a>。
+   这条 stretched link 让主链接吃满整张卡（含 padding 那一圈），
+   保持「点卡片任意位置都能运行实验」的旧手感。
+   关键：.sandbox-card-main 刻意不设 position，于是它的 ::after 定位到
+   .sandbox-card（globals.css:2716 已经是 position: relative），inset:0 就是整卡；
+   角标再用 z-index 抬到它上面，就能单独接住自己的点击。 */
+.sandbox-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sandbox-card-main::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+/* 卡片从 <a> 变成 <div> 之后 globals.css:2755 的 :focus-visible 不再触发，靠 :has 补回来 */
+.sandbox-card:has(.sandbox-card-main:focus-visible) {
+  outline: 2px solid rgba(156, 238, 255, 0.6);
+  outline-offset: 2px;
+  transform: translateY(-3px);
+}
+
+.sandbox-card:has(.sandbox-card-main:focus-visible)::after {
+  opacity: 1;
+}
+
+.sandbox-card-3d {
+  position: relative;
+  z-index: 1;
+  align-self: flex-start;
+  padding: 4px 9px;
+  border: 1px solid rgba(180, 156, 255, 0.42);
+  border-radius: 999px;
+  background: linear-gradient(
+    140deg,
+    rgba(180, 156, 255, 0.22) 0%,
+    rgba(125, 211, 252, 0.14) 100%
+  );
+  color: #ddd0ff;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+/* 只有真的建好了 3D 场景才是链接（lab3dHref 说了算）；没场景的仍是纯标签，
+   不给 hover 态，免得看着能点其实点不动。 */
+a.sandbox-card-3d.is-link {
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    border-color 200ms ease,
+    color 200ms ease,
+    transform 200ms ease;
+}
+
+a.sandbox-card-3d.is-link:hover,
+a.sandbox-card-3d.is-link:focus-visible {
+  border-color: rgba(221, 208, 255, 0.9);
+  color: #f4eeff;
+  transform: translateY(-1px);
+}
+
+a.sandbox-card-3d.is-link:focus-visible {
+  outline: 2px solid rgba(221, 208, 255, 0.55);
+  outline-offset: 2px;
+}
+
+/* 「🏷️ 教材必做」：从淡描边升级成实心高亮 —— 两个必做调试实验是这门课最容易漏的东西。 */
+.panel--sandbox .sandbox-card-tag.is-required {
+  border-color: rgba(126, 240, 192, 0.72);
+  background: linear-gradient(140deg, #9df7cf 0%, #4fd9a8 100%);
+  color: #04150f;
+  font-weight: 700;
+  box-shadow: 0 0 14px rgba(79, 217, 168, 0.34);
+}
+
+.sandbox-note-3d {
+  color: #ddd0ff;
+  white-space: nowrap;
+}

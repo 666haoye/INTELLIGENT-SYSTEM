@@ -36,7 +36,7 @@ export const MODULE_NODES: ModuleNode[] = [
     x: 874 / 1440,
     y: 365 / 900,
     mode: "knowledge",
-    blurb: "按章节、主题与印刷页码检索 169 条核心知识。",
+    blurb: "按章节、主题与印刷页码检索 288 条核心知识。",
   },
   {
     id: "cases",

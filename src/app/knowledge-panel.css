@@ -1,0 +1,532 @@
+/* ==========================================================
+   知识库 · 全量索引 + 原书切片单列工作台
+   ==========================================================
+   刻意单独成文件，不写进 globals.css：那份文件同时载着案例博弈（CaseSaga）的样式，
+   由另一条工作线并行编辑，同文件改动能干净避开就避开。
+
+   两条纪律：
+   1. 只用 kbw-* / kb-plate / kb-tab / kb-frame 这类 globals.css 里不存在的类名。
+      globals.css:1 是 Tailwind v4，它的 utilities 在 @layer utilities 里；本文件未分层，
+      因此对任何 Tailwind utility 都是**无条件胜出**（与特异性无关）。类名一旦撞车就会
+      静默覆盖掉别处的 utility，所以宁可新造名字。
+   2. 需要覆盖 globals.css 里已有的规则时，一律加 `.panel--knowledge` 前缀抬到 (0,2,0)，
+      靠特异性赢，不靠导入顺序赢——dev(webpack) 与 prod 的 CSS 产出顺序并不保证一致。
+
+   仍然复用（不重新发明）的冻结类名：`.panel--knowledge` 本体尺寸、`.kb-scroll` 的滚动条
+   与底部 mask 渐隐、`.kb-lightbox*` 整套放大层、`.jump-btn` / `.kb-btn` / `.exp-btn` /
+   `.kb-item-actions` 按钮族、`.knowledge-return*` 返回条。
+   ========================================================== */
+
+/* ---------- 命中数与页码口径 ---------- */
+
+.kbw-count {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 0;
+
+  /* 顶部留 10px：这行紧贴着上面的搜索条，不留就会粘在一起 */
+  padding: 10px 24px 9px;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.1);
+  color: rgba(186, 247, 255, 0.6);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kbw-caliber {
+  margin-left: auto;
+  color: rgba(150, 208, 240, 0.4);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+/* ---------- 带切片的宿主卡 ---------- */
+
+/* 用 .kbw-point.kbw-point--featured 抬到 (0,2,0)：本文件的书写顺序不该决定谁赢。 */
+.kbw-point.kbw-point--featured {
+  position: relative;
+  margin: 10px 0 6px;
+  padding: 15px 14px;
+  border: 1px solid rgba(125, 211, 252, 0.26);
+  border-radius: 14px;
+  background:
+    radial-gradient(72% 120% at 0% 0%, rgba(37, 99, 235, 0.14) 0%, rgba(3, 8, 20, 0) 62%),
+    linear-gradient(158deg, rgba(9, 24, 44, 0.86) 0%, rgba(2, 7, 16, 0.92) 100%);
+}
+
+.kbw-point--featured::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 15px;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    148deg,
+    rgba(156, 238, 255, 0.34) 0%,
+    rgba(125, 211, 252, 0.04) 38%,
+    rgba(125, 211, 252, 0.2) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* 手写深度解读：叠在清单括注之上，是同一卡片的第二层正文，不是另一张卡。 */
+.kbw-deep {
+  margin-top: 10px;
+  padding: 10px 12px 11px;
+  border-left: 2px solid rgba(125, 211, 252, 0.34);
+  border-radius: 0 10px 10px 0;
+  background: rgba(6, 18, 36, 0.56);
+}
+
+.kbw-deep-label {
+  margin: 0 0 5px;
+  color: rgba(186, 247, 255, 0.62);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.kbw-deep p:last-child {
+  margin: 0;
+  max-width: 82ch;
+  color: rgba(206, 238, 252, 0.8);
+  font-size: 12px;
+  line-height: 1.92;
+}
+
+/* ---------- 原书切片台 ---------- */
+
+.kb-plate {
+  margin-top: 13px;
+}
+
+.kb-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 9px;
+}
+
+.kb-tab {
+  padding: 3px 12px;
+  border: 1px solid rgba(125, 211, 252, 0.26);
+  border-radius: 7px 7px 0 0;
+  border-bottom-color: transparent;
+  background: rgba(6, 20, 38, 0.6);
+  color: rgba(178, 222, 246, 0.6);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition:
+    color 180ms var(--ease-out),
+    background-color 180ms var(--ease-out),
+    border-color 180ms var(--ease-out);
+}
+
+.kb-tab:hover {
+  color: #dff6ff;
+  border-color: rgba(125, 211, 252, 0.46);
+}
+
+.kb-tab.is-active {
+  color: #b9f2ff;
+  background: rgba(14, 48, 96, 0.72);
+  border-color: rgba(186, 247, 255, 0.56);
+  font-weight: 600;
+}
+
+/* 暗黑科技边框：深色台座 + 四角刻度，图片本身保持纸白便于阅读 */
+.kb-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  /* 预留整张图的高度：图片是懒加载的，没到位时 <img> 没有固有高度，卡片会先塌再被撑开。
+     184 张图一路滚下去就是 184 次布局跳动，滚动条长度也跟着变。
+     300（img 上限）+ 24（上下 padding），box-sizing 是 border-box。
+     横幅图（宽高比最大 3.92）到位后上下会留暗色空白，读起来像卡槽的衬纸。 */
+  min-height: 324px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 10px;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(125, 211, 252, 0.035) 0 2px,
+      rgba(0, 0, 0, 0) 2px 9px
+    ),
+    linear-gradient(160deg, #061626 0%, #010610 100%);
+  box-shadow:
+    inset 0 0 34px rgba(10, 40, 84, 0.5),
+    0 12px 30px rgba(0, 0, 0, 0.42);
+  cursor: zoom-in;
+  transition:
+    border-color 220ms var(--ease-out),
+    box-shadow 220ms var(--ease-out),
+    transform 220ms var(--ease-out);
+}
+
+.kb-frame:hover {
+  border-color: rgba(186, 247, 255, 0.6);
+  box-shadow:
+    inset 0 0 40px rgba(16, 60, 120, 0.6),
+    0 16px 40px rgba(0, 0, 0, 0.5);
+  transform: translateY(-1px);
+}
+
+.kb-frame img {
+  display: block;
+  max-width: 100%;
+  max-height: 300px;
+  height: auto;
+  border-radius: 4px;
+  background: #f3f7fb;
+  box-shadow: 0 0 0 1px rgba(160, 232, 255, 0.22);
+}
+
+.kb-plate-caption {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 8px 0 0;
+  color: rgba(150, 208, 240, 0.56);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-plate-title {
+  color: rgba(196, 234, 252, 0.44);
+  letter-spacing: 0.04em;
+}
+
+.kb-plate-count {
+  margin-left: auto;
+  color: rgba(150, 208, 240, 0.4);
+}
+
+/* ---------- 放大层标题（globals.css 里一直没写这条） ---------- */
+
+.kb-lightbox-caption {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: rgba(214, 246, 255, 0.86);
+  letter-spacing: 0.06em;
+}
+
+/* ---------- 条目列表 ---------- */
+
+.kbw-group {
+  margin: 18px 0 0;
+}
+
+.kbw-group-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.14);
+}
+
+.kbw-group-part {
+  color: rgba(150, 208, 240, 0.46);
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+}
+
+.kbw-group-title {
+  margin: 0;
+  color: #dff5ff;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.kbw-group-pages {
+  color: rgba(186, 247, 255, 0.44);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kbw-group-count {
+  margin-left: auto;
+  color: rgba(150, 208, 240, 0.36);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kbw-group-desc {
+  margin: 7px 0 0;
+  max-width: 84ch;
+  color: rgba(196, 234, 252, 0.56);
+  font-size: 10.5px;
+  line-height: 1.8;
+}
+
+.kbw-group:focus {
+  outline: none;
+}
+
+.kbw-point {
+  position: relative;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  margin: 0;
+  padding: 13px 4px;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.08);
+  scroll-margin-top: 8px;
+}
+
+.kbw-point:focus {
+  outline: none;
+}
+
+.kbw-point-page {
+  padding-top: 1px;
+  color: rgba(186, 247, 255, 0.72);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kbw-point-page span {
+  margin-right: 1px;
+  color: rgba(150, 208, 240, 0.4);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+}
+
+.kbw-point-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.kbw-point-title {
+  margin: 0;
+  margin-right: auto;
+  color: #e6f9ff;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.kbw-point-id {
+  color: rgba(150, 208, 240, 0.32);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 节号 / 跨页 / 跨章 / 所属章：都是定位信息，合成一行省掉 288 张卡的纵向开销 */
+.kbw-point-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 4px 0 0;
+  color: rgba(150, 208, 240, 0.46);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kbw-rel {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+.kbw-rel--high {
+  color: rgba(134, 240, 199, 0.82);
+}
+
+.kbw-rel--mid {
+  color: rgba(186, 247, 255, 0.6);
+}
+
+.kbw-rel--low {
+  color: rgba(150, 208, 240, 0.34);
+}
+
+.kbw-also {
+  padding: 1px 7px;
+  border: 1px dashed rgba(125, 211, 252, 0.26);
+  border-radius: 999px;
+  color: rgba(186, 247, 255, 0.56);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.kbw-pdfpage {
+  display: block;
+  margin-top: 2px;
+  color: rgba(150, 208, 240, 0.34);
+  font-size: 8.5px;
+  font-style: normal;
+  letter-spacing: 0.1em;
+}
+
+.kbw-point-summary {
+  margin: 6px 0 0;
+  max-width: 82ch;
+  color: rgba(200, 234, 250, 0.7);
+  font-size: 11.5px;
+  line-height: 1.86;
+}
+
+.kbw-terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kbw-terms li {
+  padding: 2px 8px;
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 5px;
+  background: rgba(8, 26, 48, 0.42);
+  color: rgba(178, 222, 246, 0.62);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- 深链落点高亮 ---------- */
+
+.panel--knowledge .kbw-point.is-jump-target {
+  border-color: rgba(186, 247, 255, 0.66);
+  background:
+    radial-gradient(70% 130% at 0% 0%, rgba(74, 168, 255, 0.24) 0%, rgba(3, 8, 20, 0) 64%),
+    linear-gradient(158deg, rgba(14, 44, 82, 0.9) 0%, rgba(4, 12, 26, 0.92) 100%);
+  box-shadow: 0 0 0 1px rgba(186, 247, 255, 0.3), 0 0 34px rgba(56, 152, 255, 0.28);
+  animation: kbw-jump-pulse 1.5s var(--ease-out) 2;
+}
+
+.panel--knowledge .kbw-group.is-jump-target > .kbw-group-head {
+  border-bottom-color: rgba(186, 247, 255, 0.6);
+}
+
+@keyframes kbw-jump-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(186, 247, 255, 0.3), 0 0 34px rgba(56, 152, 255, 0.28);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(186, 247, 255, 0.55), 0 0 52px rgba(96, 186, 255, 0.44);
+  }
+}
+
+/* ---------- 空态 ---------- */
+
+.kbw-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin: 46px 0 30px;
+  color: rgba(186, 247, 255, 0.56);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.kbw-empty p {
+  margin: 0;
+  color: #dff5ff;
+  font-size: 14px;
+}
+
+.kbw-empty span {
+  color: rgba(150, 208, 240, 0.42);
+  font-size: 10.5px;
+}
+
+.kbw-empty-reset {
+  margin-top: 6px;
+  padding: 5px 15px;
+  border: 1px solid rgba(125, 211, 252, 0.34);
+  border-radius: 999px;
+  background: rgba(14, 48, 96, 0.5);
+  color: #bfe9ff;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition:
+    color 200ms var(--ease-out),
+    border-color 200ms var(--ease-out);
+}
+
+.kbw-empty-reset:hover {
+  color: #effeff;
+  border-color: rgba(125, 211, 252, 0.6);
+}
+
+/* ---------- 窄屏 ---------- */
+
+@media (max-width: 720px) {
+  .kbw-count {
+    padding: 10px 16px 9px;
+  }
+
+  .kbw-caliber {
+    display: none;
+  }
+
+  .kbw-point.kbw-point--featured {
+    padding: 14px 13px 13px;
+  }
+
+  .kbw-point-summary {
+    font-size: 11.5px;
+    line-height: 1.82;
+  }
+
+  .kb-frame {
+    padding: 8px;
+
+    /* 与窄屏那档 208px 的图上限一起缩，否则小屏会露出一大块空框 */
+    min-height: 224px;
+  }
+
+  .kb-frame img {
+    max-height: 208px;
+  }
+
+  .kbw-point {
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px 2px;
+  }
+
+  .kbw-point-page {
+    font-size: 14px;
+  }
+
+  .kbw-point-id {
+    display: none;
+  }
+}

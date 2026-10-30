@@ -19,6 +19,8 @@ next-env.d.ts
 
 # 生成物：npm run export:single 的产物，改源码后重新生成，不入版本库
 /experiments/
+# 导出时复制到 HTML 同级的教材切片（源文件在 public/images/，那份要入库）
+/images/
 智教系统首页.html
 
 # 本地运维日志与参赛打包产物
@@ -29,6 +31,10 @@ logs/
 # ── 不入库：课程源材料与本机运维文件 ──
 # 教材提取的原始笔记（运行时不读，仅供 qa:index / qa:cases 生成用）
 资料库/
+# 知识点清单等课程源材料：同上，运行时不读，只喂 qa:index
+知识库材料/
+# 本机 AI 助手的工作日志，不是项目内容
+.workbuddy/
 # 内部交接文档：含访问密码、门锁缺陷说明与实现细节
 PROJECT_CONTEXT.md
 # 本机运维脚本：含 C:\Users\... 绝对路径

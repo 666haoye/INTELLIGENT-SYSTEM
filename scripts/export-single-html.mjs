@@ -191,6 +191,22 @@ function run() {
     const pages = fs.readdirSync(expDst).filter((n) => n.endsWith(".html")).length;
     console.log("[export] 实验目录已复制：" + expDst + "（" + pages + " 个实验页）");
   }
+
+  /* 教材切片：与实验目录同理 —— src/lib/kb-images.ts 输出的是相对路径 images/kb/xxx，
+     dev 下由 public/ 提供，file:// 下要求它与 智教系统首页.html 同级。
+     不做 base64 内联：12 张页面图会把单文件 HTML 撑到几十 MB，首屏解码也吃不消。
+     整个 public/images 一起搬，将来加子目录不用改这里。 */
+  const imgSrc = path.join(root, "public", "images");
+  const imgDst = path.join(root, "images");
+  if (fs.existsSync(imgSrc)) {
+    fs.rmSync(imgDst, { recursive: true, force: true });
+    fs.cpSync(imgSrc, imgDst, { recursive: true });
+    const kbDir = path.join(imgDst, "kb");
+    const shots = fs.existsSync(kbDir) ? fs.readdirSync(kbDir).length : 0;
+    console.log("[export] 图片目录已复制：" + imgDst + "（kb/ " + shots + " 张）");
+  } else {
+    console.warn("[export] 未找到 public/images —— 离线版的教材切片会缺图（先放图再导出）");
+  }
 }
 
 try {

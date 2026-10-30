@@ -10,9 +10,12 @@ import {
   type RefObject,
 } from "react";
 import { caseLibrary, type FormalCase } from "@/data/case-library";
+import { getCaseSaga } from "@/data/case-sagas";
 import { LAB_EXPERIMENTS, experimentHref } from "@/data/experiments";
+import { buildSagaRoundPrompt } from "@/lib/case-saga";
 import { resolvePageToKnowledgeTarget } from "@/lib/knowledge-links";
 import type { KnowledgeTarget } from "@/lib/question-search";
+import CaseSaga, { type SagaSnapshot } from "./CaseSaga";
 import PanelShell from "./PanelShell";
 
 const EXPERIMENT_BY_CODE = new Map(
@@ -53,8 +56,11 @@ const MICRO_SEARCH = new Map(
 
 type CaseLibraryPanelProps = {
   onClose: () => void;
+  /** 从知识库卡片深链进来时先选中哪一条（case-library 的 id，如 "c01"） */
+  initialCaseId?: string | null;
   onJumpToKnowledge: (target: KnowledgeTarget) => void;
-  onAskAI: (text: string) => void;
+  /** opts.auto 为真时，AssistantDock 会打开并直接发送（案例库错误复盘用） */
+  onAskAI: (text: string, opts?: { auto?: boolean }) => void;
 };
 
 function CaseEmblem() {
@@ -95,10 +101,12 @@ function CaseDetail({
   headingRef: RefObject<HTMLHeadingElement | null>;
   onBack: () => void;
   onJumpToKnowledge: (target: KnowledgeTarget) => void;
-  onAskAI: (text: string) => void;
+  onAskAI: (text: string, opts?: { auto?: boolean }) => void;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [pickedKey, setPickedKey] = useState<string | null>(null);
+  const [sagaSnapshot, setSagaSnapshot] = useState<SagaSnapshot | null>(null);
+  const saga = getCaseSaga(item.id);
   /* 带 nonce：连点同一个错误选项也能重置提示计时器 */
   const [wrong, setWrong] = useState<{ key: string; nonce: number } | null>(
     null,
@@ -128,12 +136,31 @@ function CaseDetail({
     setWrong({ key, nonce: Date.now() });
   };
 
+  /* 多轮案例不给答案剧透：只带当前轮的情境与问题，让老师帮忙理清权衡。
+     单题案例保持原来的「我选了 X、正确答案 Y」复盘口径。 */
+  const firstSagaRound = saga?.rounds[0];
   const askPrompt =
-    `浩晔老师，我正在看《${item.title}》这个案例。` +
-    `我刚才在情景推演里选了【${pickedOption ? pickedOption.text : "未作答"}】，` +
-    `正确答案是【${correctOption ? correctOption.text : item.correctKey}】。` +
-    `请结合这个案例的问题与结果，给我讲讲正确方案背后的原理，` +
-    `以及为什么其他选项当年走不通。`;
+    saga && firstSagaRound
+      ? buildSagaRoundPrompt({
+          meta: {
+            code: item.code,
+            title: item.title,
+            chapter: item.chapter,
+            page: item.page,
+          },
+          round: {
+            index: sagaSnapshot?.roundIndex ?? firstSagaRound.index,
+            stage: sagaSnapshot?.stage ?? firstSagaRound.stage,
+            brief: sagaSnapshot?.brief ?? firstSagaRound.brief,
+            ask: sagaSnapshot?.ask ?? firstSagaRound.ask,
+          },
+          roundTotal: saga.rounds.length,
+        })
+      : `浩晔老师，我正在看《${item.title}》这个案例。` +
+        `我刚才在情景推演里选了【${pickedOption ? pickedOption.text : "未作答"}】，` +
+        `正确答案是【${correctOption ? correctOption.text : item.correctKey}】。` +
+        `请结合这个案例的问题与结果，给我讲讲正确方案背后的原理，` +
+        `以及为什么其他选项当年走不通。`;
 
   return (
     <div className="case-detail">
@@ -185,69 +212,80 @@ function CaseDetail({
           <p>{item.problem}</p>
         </section>
 
-        <section className="case-scenario" aria-label="情景推演">
-          <p className="case-section-label">情景推演</p>
-          <p className="case-scenario-ask">
-            当年这支团队站在岔路口，他们选的是下面哪一条？
-          </p>
-          <div className="case-options">
-            {item.options.map((option) => {
-              const isPicked = pickedKey === option.key;
-              const isAnswer = option.key === item.correctKey;
-              const isWrongPick =
-                wrong !== null && wrong.key === option.key && !isAnswer;
-              const state = revealed
-                ? isAnswer
-                  ? " is-correct"
-                  : " is-locked"
-                : isWrongPick
-                  ? " is-wrong"
-                  : "";
-              return (
-                <button
-                  key={option.key}
-                  type="button"
-                  className={`case-option${state}`}
-                  onClick={() => pick(option.key)}
-                  aria-disabled={revealed}
-                  aria-pressed={isPicked}
-                >
-                  <span className="case-option-key" aria-hidden="true">
-                    {option.key}
-                  </span>
-                  <span className="case-option-text">{option.text}</span>
-                  {revealed && isAnswer ? (
-                    <span className="case-option-mark" aria-hidden="true">
-                      ✓
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-          {wrong && !revealed ? (
-            <p className="case-scenario-hint" role="status">
-              当年团队没这么做，再试一次？
-            </p>
-          ) : null}
-        </section>
+        {saga ? (
+          <CaseSaga
+            saga={saga}
+            item={item}
+            onAskAI={onAskAI}
+            onSnapshot={setSagaSnapshot}
+          />
+        ) : (
+          <>
+            <section className="case-scenario" aria-label="情景推演">
+              <p className="case-section-label">情景推演</p>
+              <p className="case-scenario-ask">
+                当年这支团队站在岔路口，他们选的是下面哪一条？
+              </p>
+              <div className="case-options">
+                {item.options.map((option) => {
+                  const isPicked = pickedKey === option.key;
+                  const isAnswer = option.key === item.correctKey;
+                  const isWrongPick =
+                    wrong !== null && wrong.key === option.key && !isAnswer;
+                  const state = revealed
+                    ? isAnswer
+                      ? " is-correct"
+                      : " is-locked"
+                    : isWrongPick
+                      ? " is-wrong"
+                      : "";
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      className={`case-option${state}`}
+                      onClick={() => pick(option.key)}
+                      aria-disabled={revealed}
+                      aria-pressed={isPicked}
+                    >
+                      <span className="case-option-key" aria-hidden="true">
+                        {option.key}
+                      </span>
+                      <span className="case-option-text">{option.text}</span>
+                      {revealed && isAnswer ? (
+                        <span className="case-option-mark" aria-hidden="true">
+                          ✓
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+              {wrong && !revealed ? (
+                <p className="case-scenario-hint" role="status">
+                  当年团队没这么做，再试一次？
+                </p>
+              ) : null}
+            </section>
 
-        {revealed ? (
-          <div className="case-reveal">
-            <section className="case-section">
-              <p className="case-section-label">02 / 方法</p>
-              <p>{item.method}</p>
-            </section>
-            <section className="case-section case-section--result">
-              <p className="case-section-label">03 / 结果</p>
-              <p>{item.result}</p>
-            </section>
-            <section className="case-section">
-              <p className="case-section-label">04 / 启示</p>
-              <p>{item.lesson}</p>
-            </section>
-          </div>
-        ) : null}
+            {revealed ? (
+              <div className="case-reveal">
+                <section className="case-section">
+                  <p className="case-section-label">02 / 方法</p>
+                  <p>{item.method}</p>
+                </section>
+                <section className="case-section case-section--result">
+                  <p className="case-section-label">03 / 结果</p>
+                  <p>{item.result}</p>
+                </section>
+                <section className="case-section">
+                  <p className="case-section-label">04 / 启示</p>
+                  <p>{item.lesson}</p>
+                </section>
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
 
       <div className="case-actions">
@@ -308,6 +346,7 @@ function CaseDetail({
 
 export default function CaseLibraryPanel({
   onClose,
+  initialCaseId,
   onJumpToKnowledge,
   onAskAI,
 }: CaseLibraryPanelProps) {
@@ -316,7 +355,7 @@ export default function CaseLibraryPanel({
   const [domain, setDomain] = useState("");
   const [track, setTrack] = useState("");
   const [selectedId, setSelectedId] = useState(
-    caseLibrary.formalCases[0]?.id ?? "",
+    initialCaseId || caseLibrary.formalCases[0]?.id || "",
   );
   const [detailOpen, setDetailOpen] = useState(false);
 
@@ -618,6 +657,9 @@ export default function CaseLibraryPanel({
                     </span>
                     <span className="case-item-domain">{item.domain}</span>
                     <span className="case-item-year">{item.year}</span>
+                    {getCaseSaga(item.id) ? (
+                      <span className="case-item-saga">多轮博弈</span>
+                    ) : null}
                   </span>
                   <span className="case-item-title">{item.title}</span>
                   <span className="case-item-result">{item.result}</span>

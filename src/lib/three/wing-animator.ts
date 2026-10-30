@@ -27,8 +27,6 @@ const FOLD_MAX = (12 * Math.PI) / 180;
 const CORE_PULSE_PERIOD = FOLD_PERIOD;
 const CORE_AURA_PERIOD = FOLD_PERIOD;
 const CORE_RING_SPIN_PERIOD = 32;
-/** 穹顶自转：一圈约 10 分钟，只作空间感，不该被意识成「在动」 */
-const DOME_PERIOD = 600;
 
 /**
  * 触须：与翼折叠**同频**（6s），幅度放大到 ±5.5°/±6.5°，左右反向摆动形成对称外扩。
@@ -203,14 +201,11 @@ export function createWingAnimator(parts: ButterflyParts): WingAnimator {
       parts.coreAura.scale.setScalar(auraBaseScale * (active ? osc(0.92, 1.06, t, CORE_AURA_PERIOD) : 1));
       if (ringMesh) ringMesh.rotation.z = active ? (t / CORE_RING_SPIN_PERIOD) * Math.PI * 2 : 0;
 
-      /* ---- 4b. 旗舰档：三层能量环各自转速、穹顶极慢自转 ---- */
+      /* ---- 4b. 旗舰档：三层能量环各自转速 ---- */
       for (const ring of parts.coreRings) {
         const speed = Number(ring.userData.spin ?? 1);
         const axis = speed === 1 ? "z" : speed === 2 ? "x" : "y";
         ring.rotation[axis] = active ? (t / (18 * speed)) * Math.PI * 2 : 0;
-      }
-      if (parts.dome) {
-        parts.dome.rotation.y = active ? (t / DOME_PERIOD) * Math.PI * 2 : 0;
       }
 
       /* ---- 5. 触须摆动（与翼同频，用翼时钟驱动）---- */

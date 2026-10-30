@@ -110,8 +110,7 @@ export type ButterflyParts = {
   brightness: BrightnessTarget[];
   disposables: Array<{ dispose(): void }>;
   lineMaterials: FatMaterial[];
-  /** 旗舰档专属：穹顶、三轴能量环，节能档为 null / 空 */
-  dome: THREE.Object3D | null;
+  /** 旗舰档专属：三轴能量环，节能档为空 */
   coreRings: THREE.Object3D[];
 };
 
@@ -728,7 +727,6 @@ export function buildEcoButterfly(resolution: THREE.Vector2): ButterflyParts {
     brightness: [],
     disposables: [],
     lineMaterials: [],
-    dome: null,
     coreRings: [],
   };
 

@@ -2,6 +2,7 @@
 
 > 本文件是动效参数的**唯一事实源**。改动画先改这里，再改代码；代码里的注释只解释"为什么"。
 > 关联实现：`src/lib/three/{wing-animator,camera-rig,interaction-state,light-path,node-rings,hover-raycast,label-controller,design-space}.ts`
+> 深空背景层另有实现：`src/lib/three/{deep-space,starfield}.ts` + `src/components/SpaceCanvas.tsx`（§5b）
 
 ## 0. 设计基调
 
@@ -10,6 +11,7 @@
 - 幅度小、周期长、无回弹；不做快速拍打、不做相机漫游、不做"贴脸"推镜
 - 页面受众设备跨度大：旗舰档吃满视觉，节能档只保留静态线框与极慢浮动
 - 3D 画面由用户本机 GPU 实时渲染，服务器性能与它无关 —— 所以必须有客户端分档与运行时降级
+- **深空背景层同样遵守这条律**（§5b）：星空每帧位移 ≤ 0.1 px，相机漂移是 ±1 单位级别的纯平移而不是环绕 —— 点精灵没有运动模糊，超过这个速度就读成"颗粒在爬"而不是"天空在转"
 
 ## 1. 四翼折叠（唯一运动律）
 
@@ -195,19 +197,100 @@ idle ──hover──▶ hover ──click──▶ locking ──(settle + 1.3
 （z = `PATH_Z = 0.18`，与环同平面）。实测 `|pathEnd − pearlWorld| = 0.0004` 世界单位
 （≈0.04 设计像素）。截断还顺带省掉翼尖那半段无意义的路径。
 
+## 5b. 深空背景层（独立全屏 WebGL）
+
+关联实现：`src/components/SpaceCanvas.tsx` + `src/lib/three/{deep-space,starfield}.ts`
+
+背景不在蝴蝶那个场景里，而是**另开一个 `position: fixed; inset: 0` 的 WebGL 层**，自带 renderer / scene / camera / rAF。
+
+原因不是洁癖，是框算：蝴蝶画布是 `.butterfly-center { width: min(112vw, 178vh); aspect-ratio: 8/5 }`，它**不是全屏的** ——
+
+| 视口 | 蝴蝶画布实际尺寸 | 若星空做进蝴蝶场景 |
+|---|---|---|
+| 390×844（手机） | 437×273 | 星星只在中间 273px 横带，上下各 ~285px 纯黑 |
+| 1440×1080（4:3） | 1613×1008 | 上下各露 36px 黑边 |
+| 1920×1080（16:9） | 1922×1201 | 恰好铺满（唯一的幸运情况） |
+
+而且节能档 `.butterfly-float` 还带 CSS `translate3d(0, ±9px)` 浮动（`:228` 旗舰档才关掉），不透明 `scene.background` 会露出一个**会上下移动的矩形**。蝴蝶相机的 aspect 又必须恒等于 `DESIGN_W/DESIGN_H`（DOM 标签对齐契约，`reportAlignment` 每次启动断言），所以也不能靠"把画布改成全屏"解决。
+
+### 5b-1. 层与相机
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| 层序 | `.site-bg` → **`.space-canvas`** → `.site-vignette` → `.trails-canvas` → `.butterfly-stage` | 前三者同为 `z-index:0`，靠 DOM 顺序分层；暗角压在星点之上，正好保住中心焦点 |
+| `scene.background` | **`#020205`** | 不透明铺满。`.site-bg` / `body` / `.home-root` 同步压成平涂 `#020205`，只在 WebGL 没挂载（`isStatic` / 无 WebGL2 / 首帧前）时露出来当兜底 |
+| 相机 | fov **45°** · 机位 `(0, 0, 60)` · near **1** / far **620** | 与蝴蝶同 fov 是为了画面语言一致。**刻意不调 `lookAt`** —— 一旦每帧 lookAt，漂移会把原点重新拉回画面中心，平移视差被旋转抵消；保持默认 −z 朝向 + 纯平移才有"近星移得多、远星移得少" |
+| renderer | `alpha:false depth:false stencil:false antialias:false` | 全层没有任何深度写入 ⇒ 不需要深度附件；1~3px 点精灵 MSAA 帮不上忙，抗锯齿靠 shader 的高斯衰减。省下的都是每帧带宽 |
+| devicePixelRatio | 上限 **1.5**（两档都是） | 主要成本是每帧一次全屏 opaque clear，严格正比于 drawingBuffer 像素数：2560×1440 @dpr2 = 14.7M px/帧，@1.5 = 8.3M，省 44%。本层最细的特征是 1~3px 的点，dpr2 收益几乎为零 |
+| 挂载 | `dynamic(() => import("./SpaceCanvas"), { ssr: false })` | 与蝴蝶层同款 |
+| `isStatic` | **完全不挂载 WebGL** | `prefers-reduced-motion` 的语义是"不要给我动画"，为它建一个长期存活的上下文 + 每帧全屏清屏是纯负担；少一个上下文也缓解浏览器 8~16 个的上限压力 |
+
+`SPACE_FOV` 不复用 `design-space.ts` 的 `CAMERA_FOV`：后者是 DOM 标签对齐契约的一部分，同值只是巧合，耦合进来会让"改蝴蝶相机"意外改到背景。
+
+### 5b-2. 星空（`THREE.Points`，1 个 draw call）
+
+| 项 | 值 | 为什么 |
+|---|---|---|
+| 数量 | flagship **2600** / eco **1800** | eco 不按档位减半：cap 已经让手机只撒到 14% 的星上，再砍一半就稀疏到读不出"星空" |
+| 半径 | `R = 90 + 170·rand()`（**半径均匀**） | 相机在壳**内**（60 < 90）⇒ 星星永远不会掠过镜头；视线距离 100→319 = 3.2× 深度跨度，这就是漂移视差的来源。体积均匀会把 78% 的星推到 R>200，近处星太少、视差消失 |
+| 角域 | 前向 **cap** = `atan(TAN_HALF·√(1+aspect²)) + 25°` | **不是优化，是必需**：45° 视锥只占 4π 的 6.8%（手机竖屏 2.3%），全向球壳下 2600 颗只有约 180 颗在画面里。cap 让可见密度跟着视口走。半角实测（`stars().capHalfDeg`）：**0.462 → 49.53° · 1.059 → 56.10° · 1.333 → 59.62° · 2.388 → 72.00°**，与公式逐项吻合 |
+| cap 采样 | `dz = −1 + rand·(1 − cos capHalf)`，`φ = rand·2π` | 对 cos 均匀 = 球面均匀，零拒绝采样 |
+| 25° 余量够用性 | 耗尽需 **202 分钟** | 自转轴与 +z 夹 31°，cap 中心每转 1° 只偏移 `sin31° = 0.515°`；0.24°/s × 0.515 → 远超单次会话，quiet 还会冻住 |
+| 自转周期 | **1500 s（25 min）** | 0.24°/s = 5.2 px/s = **0.086 px/帧**，卡在 ≤0.1 px/帧 的判据内。比旧穹顶的 600s 慢 2.5×：网格靠线条读运动，孤立点必须更慢才读成"深邃"而不是"在飘" |
+| 自转轴 | `normalize(0.42, 0.30, 0.86)`（与 +z 夹 **31°**） | 绕近竖直轴转 = 纯水平位移，读成"pan"；绕近视轴转 = 慢速天球旋涡，读成"星轨"。31° 是混合，且旋极落在相机身后 ⇒ 画面里**没有静止点** |
+| 相机漂移 | x 幅度 **0.95** 周期 **137 s** · y 幅度 **0.62** 周期 **89 s** · 相位差 0.7 rad | 137/89 互质 ⇒ 李萨如 12193 s 内不重复，不会有"循环感"。近星 0.53 px/s、远星 0.20 px/s，差值 ≈20 px/min = 盯一分钟能看出来的"微弱视差"。幅度从直觉的 1.6 压到 0.95，是因为蝴蝶在另一张画布上不动 —— `:226` 已有"两种运动叠加会晕"的先例 |
+| 逐星尺寸 | 自定义 `ShaderMaterial` + `aStar`(尺寸/色温/增益) + `aTwinkle`(相位/速率) | `PointsMaterial` 不支持逐点 size；分层叠加只能整层统一闪烁 = 迪斯科。8 floats/星 × 2600 = 83 KB，**1 个 draw call** |
+| `gl_PointSize` | `clamp(aStar.x · uScale / max(1, −mv.z), 1.0, 6.0 · uDpr)` | 上限按 **CSS 像素** 计（乘 `uDpr` 换算回设备像素）：星点的物理大小必须与 dpr 无关，否则高分屏上同样的星星反而画得更小。下限留 1 设备像素，再小就采不到 |
+| 颜色 | 三段插值 `#fffdf9` → `#e5f1ff` → `#b6d2fc`，`aTint = rand^1.8` ⇒ 白:淡蓝 ≈ **72:28** | 分支消除式（两个 `clamp` 而不是 `if`）。**不用 `THREE.Color`**：r186 默认 `ColorManagement.enabled` 会 sRGB→Linear，而自定义 ShaderMaterial 不自动补回输出编码 ⇒ 星色偏暗过饱和。直接写 `Vector3` 的 sRGB 分量，进帧缓冲即所见 |
+| 亮度 / 尺寸 | `gain = 0.26 + 0.74·rand^1.5` · `size = 0.16 + 0.72·rand^2.2` | 幂律 = 真实星等分布（多小少大）。**实测**（831×785 / dpr1）：均值 **2.17 CSS px**、上限 6、被抬到 1px 下限的占 **20%**、撞 6px 顶的占 **1.3%**；全部星点面积占全屏 **0.914%** |
+| 闪烁 | 振幅 **±10%**、周期 **7.4~25.1 s**、逐星独立相位 | 1~3px 的点上做大幅度调制读成噪点/坏点，不是闪烁。eco 关掉（`uTwinkle = 0`，不重编译 shader、不留变体）—— 理由是**观感**不是性能 |
+| 银河带 | **34% 尝试**带内采样（实测落进 cap 的 **25.2%**），带法向 `normalize(0.62, −0.62, −0.22)`，横向散布 `gauss()·0.16 rad` 夹 ±0.6；带内星 `size ×1.4`、`gain ×0.60` | **只做密度+雾化偏置，不做亮带**。法向的 z 分量决定带离屏幕中心多远：`arcsin(0.243) ≈ 14°`，落在竖直半视场 22.5° 内但不压着中心。大圆包含 `(0.707,0.707,0)` ⇒ 屏幕上是左下→右上的斜带。尝试数与实际落点数差 9 个百分点，是因为带是一个完整大圆、只有朝相机的那一面进得了 cap。成本只在生成期，零逐帧开销 |
+| 渲染状态 | `depthWrite:false` · `depthTest:false` · `AdditiveBlending` · `transparent:true` · `frustumCulled:false` | 加法混合的透明物写深度会把身后的星抠掉；本层没有任何东西写深度，`depthTest` 只会白跑；包围球心在原点半径 260 而相机在壳内 ⇒ 永远相交，剔除只是白算一次球变换。层里只有这一个绘制对象，所以不需要 `renderOrder` |
+| fragment | `a = exp(−|uv−0.5|² · 7) · gain`，`a < 0.004` 则 `discard` | **高斯衰减而不是 smoothstep 硬边**：`gl_PointCoord` 在 1 像素点上恒为 (0.5,0.5) ⇒ r²=0 ⇒ a=gain，远处最小星不会被衰减吃掉亮度。`discard` 省掉四角 overdraw |
+| 种子 | `mulberry32(固定)` | 每次刷新同一片天空 ⇒ 验收可断言，而不是"看着差不多" |
+
+### 5b-3. 安静 / 暂停 / 分档
+
+| 状态 | 星空 | rAF |
+|---|---|---|
+| 正常 | 自转 + 漂移 + 逐星闪烁 | 跑 |
+| **quiet** | **全部冻结**（自转/漂移/`uTime` 都不推进），星点仍可见 | **下一帧直接** `cancelAnimationFrame`，只留最后一帧静态画面，零每帧开销 |
+| `isStatic` | 不挂载 WebGL | 无 |
+| `paused`（标签页失焦 / 面板打开） | 冻在当下 | cancel；恢复后从冻住处接着走 |
+| 运行时降档 eco | 重建 1800 颗（<2 ms）、关闪烁 | 跑 |
+
+`quiet` 与 `paused` 在实现上走同一条门控（都不再 `advance`），区别只在语义：安静是用户主动要静态画面，暂停是环境临时不让动。两者都不需要"渐隐收尾"，所以 `stepFrame()` 一返回 false 循环就停 —— 停之前仍会 `paint()` 一次，把冻结后的画面留在画布上而不是倒数第二帧。
+
+`pump(dt)` 与 `tick(dt)` 必须分清：`tick` 无条件推进（照 `__zjButterfly.setForceFlow` 的思路，用来在 quiet / paused 下也手动攒出画面），`pump` 走 `stepFrame` 这条与 rAF 完全相同的门控路径。**测「安静档是否冻结、是否真的停了 rAF」只能用 `pump`** —— 用 `tick` 测的是钩子自己的行为而不是真实行为，结论是假的。这条区分就是当初把每帧门控从 `loop` 里抽成 `stepFrame` 的原因。
+
+**quiet 保留的是静态画面，不是动画** —— rAF 已 cancel、每帧开销为零、`uTime` 冻住。这与"安静模式不保留任何动画"不冲突，但别把它当 bug 修掉。
+
+`run = enabled && !quiet && !paused && !document.hidden`。`syncLoop()` 重启时必须重置 `last`，否则离开后回来的第一帧 dt 是"离开多久"而不是帧间隔（虽会被夹到 0.05，但计时器会白推进一次）。
+
+分档只改常量（count / twinkle），所以走「dispose + 重建模块」而不是在每个模块里维护档位分支；重建末尾**必须主动画一帧**，否则会停在旧的旗舰档星空上。`SpaceCanvas` 的初值要读 `readTierOverride()`（dev 的 `?tier=eco`），不然用它验节能档时背景层还是旗舰档，验收结论是假的。
+
+`paused` 含 `Boolean(activeId)`（与 `TrailsCanvas` 同口径）而不只是 `pagePaused`：面板打开时 `.kb-chapter-head` 等用了 `backdrop-filter: blur()`，下面压一个每帧都在动的不透明 WebGL 层会让模糊每帧重算。
+
+resize 走 `ResizeObserver(document.documentElement)` + rAF 合并，在 rAF 里读 `window.innerWidth/innerHeight`：本层是 `fixed inset 0`，尺寸恒等于视口、与祖先布局无关，读 window 比读元素准（`clientWidth` 在 fixed 元素上受滚动条影响），而观察自己 + 直接 setSize 在移动端地址栏收放时可能形成 RO 循环。`|aspect/lastAspect − 1| > 0.15` 才 `rebuild`（只有转屏会触发；同种子 ⇒ 新旧天空统计观感一致）。
+
+**为什么这一层只有星空、没有流星**：「划过」的语义已经由 `TrailsCanvas`（2D 蓝色光轨）承担了，而且它不是装饰 —— 它驱动 `onNodeLit / onNodeNear`，是翼上脉络亮波的触发源。再加一套 3D 流星是重复表达，两种条纹并存还会互相抢读。所以本层刻意只做**静态纵深**（星空 + 极慢自转 + 微弱漂移），把"动"留给光轨。`TrailsCanvas` 本身一行不动。
+
 ## 6. 渲染预算
 
 | 项 | 旗舰档 | 节能档 |
 |---|---|---|
-| draw call | 静态 **127** ≤ 136 · hover 130 ≤ 140 · 激活+光路 **130** ≤ 142 | **96** ≤ 110 |
-| 三角形 | 实测 **101,256** ≤ 120k | 57,438 |
-| 粒子 | 仅光路 6 个（阶段二才加 3000 空间粒子） | 无 |
+| draw call | 静态 **126** ≤ 136 · hover 129 ≤ 140 · 激活+光路 **129** ≤ 142 | **96** ≤ 110 |
+| 三角形 | 实测 **100,728** ≤ 120k | **57,438** |
+| 粒子 | 光路 6 个 + **深空层 2600 星点**（独立 renderer，不占这本账，见 §5b） | 光路 6 个 + 深空层 1800 星点 |
 | 后处理 | 阶段二才接 EffectComposer + UnrealBloom + RGBShift | 无 |
 
-账目变动（相对上一版）：删掉 8 个 Torus 网格 + 12 个虚线插座，换成每节点 3 条环线 + 1 颗宝珠
-（hover 时多 1 条展开环）。节能档也共用这套环 —— 节点视觉两档完全一致，降档不需要换皮。
-光路只在 lock 阶段瞬态存在，虚影→激活是**替换**不是叠加，所以峰值不涨；
-不可见热区走解析射线×球求交、不建 Mesh → **0** 个 draw call。
+静态 126 / 三角形 100,728 / 节能档 96 · 57,438 都是 `__zjButterfly.stats()` 的**实测值**；hover 与激活两档是「静态实测 + 环/光路的已知增量」推算值，改环或改光路时要重新实测。`setTier('eco') ↔ setTier('flagship')` 往返三轮后 `geometries` 恒为 97、`textures` 恒为 7 ⇒ 降档不重建几何、不泄漏。
+
+账目变动（相对上一版）：**删掉深空穹顶** —— `SphereGeometry(58,24,12)` 是 1 个 draw call，两极各退化 24 个三角形所以是 `24×12×2 − 48 =` **528** 个三角形（不是 576）。实测正是 127→126、101,256→100,728。穹顶原本 `renderOrder=0` 且不写深度，删掉不影响任何其它对象的绘制顺序；`applyTier` 的 traverse 只"命中 `flagshipOnly` 就设 visible"，不数数量也不依赖顺序，少一个对象无副作用。
+
+深空背景层是**另一个 renderer**，实测 `drawCalls` **恒为 1**（只有星空那一个 `Points`）、`geometries: 1`、`textures: 0`（纯 procedural shader，一张贴图都不引，`file://` 单文件导出照旧可用）。它的账不进上面这本 —— 两本账分开看，`__zjButterfly.stats()` 与 `__zjSpace.stats()` 各读各的。星点点亮面积实测占全屏 **0.53%（1600×670）~ 1.26%（390×844）**，随视口面积反比变化，fill rate 可忽略；真正的固定成本是每帧一次全屏 opaque clear，这才是 DPR 上限压到 1.5 的理由。
+
+配套约定：不可见热区走解析射线×球求交、不建 Mesh → **0** 个 draw call；光路只在 lock 阶段瞬态存在，虚影→激活是**替换**不是叠加，所以峰值不涨。
 
 ## 7. 其他必须记住的约定
 
