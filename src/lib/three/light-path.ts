@@ -26,11 +26,15 @@ export type LightPathState = "off" | "ghost" | "active" | "dissolving";
 
 const PARTICLE_COUNT = 6;
 const SAMPLES = 56;
-/** 贴在脉络前方一点，避免和三层 Tube 打架 */
+/** 贴在神经主干前方一点，避免和管壁打架 */
 const PATH_Z = 0.18;
 
-/** 每个节点贴着哪条主脉（索引指向 WING_SPEC.main） */
-const NODE_VEIN: Record<NodeId, { kind: "fore" | "hind"; index: number }> = {
+/**
+ * 每个节点贴着哪条主脉（索引指向 WING_SPEC.main）。
+ * 旗舰档的主神经 mesh 也从这里取索引 —— 两处必须共用同一份映射，
+ * 否则改了节点对应的脉络，光路和主干会各走一条。
+ */
+export const NODE_VEIN: Record<NodeId, { kind: "fore" | "hind"; index: number }> = {
   problem: { kind: "fore", index: 1 },
   knowledge: { kind: "fore", index: 1 },
   cases: { kind: "hind", index: 0 },

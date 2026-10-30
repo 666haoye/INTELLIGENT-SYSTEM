@@ -197,6 +197,8 @@ export default function ButterflyScene({
 
       parts.root.traverse((object) => {
         if (object.userData.flagshipOnly === true) object.visible = rigEnabled;
+        /* 旗舰档的神经分形树接管了翼面脉络，eco 的直线层只在节能档保留 */
+        if (object.userData.ecoOnly === true) object.visible = !rigEnabled;
         if (object.name === "legacyOrb" || object.name === "legacyGlint") {
           object.visible = !rigEnabled;
         }

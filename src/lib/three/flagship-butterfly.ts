@@ -1,7 +1,7 @@
 /* 旗舰档：在已验证的节能档线框蝴蝶之上，叠出真正的立体结构。
  *
  * 做法是「组合」而不是「另写一套」：先拿 buildEcoButterfly() 的完整场景，
- * 再往每个翼 pivot 里塞翼膜与三层 Tube 脉络，替换能量核。
+ * 再往每个翼 pivot 里塞翼膜、神经分形树与能量核。
  * 节点环两档共用，不在这里建（见 node-rings.ts）。
  * 这样线框细节（28 条细脉、虚线 cell、sparks）一行都不用重写，
  * 两档共用同一份几何数据，不会出现「改了旗舰档、节能档悄悄坏掉」的分叉。
@@ -10,35 +10,22 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 import { buildEcoButterfly, WING_SPEC, type ButterflyParts, type WingQuadrant } from "./butterfly-scene";
-import { CORE, cubicSegments, parsePath, type Pt } from "./wing-geometry";
+import { CORE, parsePath } from "./wing-geometry";
 import { toWorldSize } from "./design-space";
-
-/** 主脉三层排布：前后各 14 设计像素，中间层略微缩小制造视差 */
-const MAIN_LAYERS: Array<{ zPx: number; scale: number }> = [
-  { zPx: 14, scale: 1 },
-  { zPx: 0, scale: 0.985 },
-  { zPx: -14, scale: 0.97 },
-];
-/**
- * 细脉只铺两层。三层时四片翼的三角形直接冲到 147k、draw call 149，
- * 超掉阶段一预算；细脉本来只有 0.55px 级别的视觉权重，第三层的视差看不出来，
- * 砍掉它换来的是预算内 40% 的余量。
- */
-const FINE_LAYERS: Array<{ zPx: number; scale: number }> = [
-  { zPx: 10, scale: 1 },
-  { zPx: -10, scale: 0.985 },
-];
+import { createFlowDot } from "./glow-texture";
+import { NODE_VEIN } from "./light-path";
+import { buildNerveTree, nerveSeed, sampleTrunk, taperedTube } from "./wing-nerves";
 
 /**
- * 主脉更粗、分段更多；细脉降规格，因为它是背景纹理而不是结构。
+ * 神经分形树的管规格（世界单位，1 = 100 设计像素）。
  *
- * 半径单位是世界单位（1 = 100 设计像素），相机在 11.6 处、fov 45°，
- * 所以 0.009 就是直径约 1.8 设计像素的管子 —— 第一版按「像素」直觉给数，
- * 结果细脉糊成一捆吸管，把线框的精致感全压掉了。这里按 1px≈0.005 反推。
+ * 半径阶梯按参考图定：主干 0.021→0.007（根粗梢细）→ 一级分支 0.006→0.0026
+ * → 末端突触 0.0026→0.0011（Points 收尾）。恒径管会读成"荧光棒"，所以主干与
+ * 肋脉都用 taperedTube 变径；全部单层铺在 z=0，层次感交给翼膜与节点环。
  */
-const VEIN_DETAIL: Record<"main" | "fine", { radius: number; tubular: number; radial: number }> = {
-  main: { radius: 0.014, tubular: 20, radial: 4 },
-  fine: { radius: 0.0055, tubular: 12, radial: 3 },
+const NERVE_DETAIL = {
+  trunk: { root: 0.021, tip: 0.007, tubular: 36, radial: 6 },
+  rib: { root: 0.0065, tip: 0.0035, tubular: 16, radial: 4 },
 };
 
 export type FlagshipBuild = {
@@ -55,52 +42,11 @@ function mark(object: THREE.Object3D): THREE.Object3D {
   return object;
 }
 
-/** 设计坐标（相对 hinge）→ 该层的三维局部坐标 */
-function layerPoint(p: Pt, origin: Pt, layer: { scale: number; zPx: number }): THREE.Vector3 {
-  return new THREE.Vector3(
-    ((p[0] - origin[0]) / 100) * layer.scale,
-    (-(p[1] - origin[1]) / 100) * layer.scale,
-    toWorldSize(layer.zPx),
-  );
-}
-
-/**
- * 把一批路径铺成三层 Tube 并合并成**一个**几何体。
- * 不合并的话单侧细脉 16×3=48 根就是 48 个 draw call，四片翼直接爆表。
- */
-function mergedVeinGeometry(
-  paths: string[],
-  origin: Pt,
-  layers: Array<{ zPx: number; scale: number }>,
-  detail: { radius: number; tubular: number; radial: number },
-  parts: ButterflyParts,
-): THREE.BufferGeometry | null {
-  const pieces: THREE.BufferGeometry[] = [];
-
-  for (const layer of layers) {
-    for (const d of paths) {
-      for (const spec of cubicSegments(d)) {
-        const curve = new THREE.CubicBezierCurve3(
-          layerPoint(spec.from, origin, layer),
-          layerPoint(spec.c1, origin, layer),
-          layerPoint(spec.c2, origin, layer),
-          layerPoint(spec.to, origin, layer),
-        );
-        pieces.push(
-          new THREE.TubeGeometry(curve, detail.tubular, detail.radius, detail.radial, false),
-        );
-      }
-    }
-  }
-
-  if (!pieces.length) return null;
-  const merged = mergeGeometries(pieces, false);
-  for (const piece of pieces) piece.dispose();
-  if (merged) parts.disposables.push(merged);
-  return merged;
-}
-
 function addMembraneAndTubes(parts: ButterflyParts) {
+  /* 突触发光点：四翼共用一张 CanvasTexture（createFlowDot 不缓存，调四次会多出三张纹理） */
+  const synapseTexture = createFlowDot();
+  parts.disposables.push(synapseTexture);
+
   for (const [key, wing] of Object.entries(parts.wings) as Array<[WingQuadrant, THREE.Group]>) {
     const side = key.startsWith("left") ? "left" : "right";
     const kind = key.endsWith("Top") ? "fore" : "hind";
@@ -118,6 +64,10 @@ function addMembraneAndTubes(parts: ButterflyParts) {
       else shape.lineTo(lx, ly);
     });
     shape.closePath();
+    /* 分形枝只允许长在翼膜轮廓内 */
+    const bounds = outline.map(
+      ([x, y]) => new THREE.Vector2((x - origin[0]) / 100, -(y - origin[1]) / 100),
+    );
 
     const membraneGeometry = new THREE.ShapeGeometry(shape, 12);
     const membraneMaterial = new THREE.MeshStandardMaterial({
@@ -138,39 +88,131 @@ function addMembraneAndTubes(parts: ButterflyParts) {
     membrane.renderOrder = 1;
     wing.add(mark(membrane));
 
-    const addVeins = (
-      paths: string[],
-      layers: Array<{ zPx: number; scale: number }>,
-      detail: { radius: number; tubular: number; radial: number },
-      color: string,
-      emissive: string,
-      emissiveIntensity: number,
-      opacity: number,
-      layer: "veinBright" | "veinGlow",
-    ) => {
-      const geometry = mergedVeinGeometry(paths, origin, layers, detail, parts);
-      if (!geometry) return;
-      const material = new THREE.MeshStandardMaterial({
-        color,
-        emissive,
-        emissiveIntensity,
+    /* ---- 主神经：每翼一条，就是 light-path 贴着跑的那条 NODE_VEIN 主干 ----
+       单独成 mesh 并打 nerveTrunk 标记：后续阶段的"点亮 / 粒子流"只操作它。 */
+    const mapping = kind === "fore" ? NODE_VEIN.problem : NODE_VEIN.cases;
+    const trunkPath = spec.main[mapping.index] ?? spec.main[0];
+    const trunkPoints = sampleTrunk(trunkPath, origin);
+    const trunkGeometry = taperedTube(
+      new THREE.CatmullRomCurve3(trunkPoints, false, "catmullrom", 0.4),
+      NERVE_DETAIL.trunk.tubular,
+      NERVE_DETAIL.trunk.radial,
+      (t) =>
+        THREE.MathUtils.lerp(
+          NERVE_DETAIL.trunk.root,
+          NERVE_DETAIL.trunk.tip,
+          Math.pow(t, 1.15),
+        ),
+    );
+    const trunkMaterial = new THREE.MeshStandardMaterial({
+      color: "#7dd3fc",
+      emissive: "#38bdf8",
+      emissiveIntensity: 0.85,
+      metalness: 0.1,
+      roughness: 0.4,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    parts.disposables.push(trunkGeometry, trunkMaterial);
+    parts.brightness.push({ side, layer: "veinBright", material: trunkMaterial, base: 0.9 });
+    const trunkMesh = new THREE.Mesh(trunkGeometry, trunkMaterial);
+    trunkMesh.name = `nerve-trunk-${key}`;
+    trunkMesh.renderOrder = 2;
+    trunkMesh.frustumCulled = false;
+    mark(trunkMesh).userData.nerveTrunk = true;
+    wing.add(trunkMesh);
+
+    /* ---- 肋脉 + 分形分支：一个几何、一个材质 ----
+       肋脉只留首、中、尾三条做骨架，其余交给分形树 —— 保留 5~6 条就是"直线雨伞"。
+       每条肋脉也长一层较短的分支，把翼面外侧填满。 */
+    const tree = buildNerveTree(trunkPoints, nerveSeed(key), { lengthScale: 1.05, bounds });
+    const remainingRibs = spec.main.filter((_, index) => index !== mapping.index);
+    const ribPaths =
+      remainingRibs.length > 3
+        ? [
+            remainingRibs[0],
+            remainingRibs[Math.floor(remainingRibs.length / 2)],
+            remainingRibs[remainingRibs.length - 1],
+          ]
+        : remainingRibs;
+    const ribSamples = ribPaths.map((d) => sampleTrunk(d, origin));
+    const ribPieces = ribSamples.map((points) =>
+      taperedTube(
+        new THREE.CatmullRomCurve3(points, false, "catmullrom", 0.4),
+        NERVE_DETAIL.rib.tubular,
+        NERVE_DETAIL.rib.radial,
+        (t) => THREE.MathUtils.lerp(NERVE_DETAIL.rib.root, NERVE_DETAIL.rib.tip, t),
+      ),
+    );
+    const ribTrees = ribSamples.map((points, index) =>
+      buildNerveTree(points, nerveSeed(key) + 97 * (index + 1), {
+        lengthScale: 0.8,
+        stride: 1,
+        anchorRatio: 0.88,
+        radiusScale: 0.7,
+        bounds,
+      }),
+    );
+    const synapses = [
+      ...tree.synapses,
+      ...ribTrees.flatMap((item) => item.synapses),
+    ];
+    const pieces = [
+      ...ribPieces,
+      ...tree.branchPieces,
+      ...ribTrees.flatMap((item) => item.branchPieces),
+    ];
+    const ribGeometry = mergeGeometries(pieces, false);
+    for (const piece of pieces) piece.dispose();
+    if (ribGeometry) {
+      parts.disposables.push(ribGeometry);
+      const ribMaterial = new THREE.MeshStandardMaterial({
+        color: "#7dd3fc",
+        emissive: "#38bdf8",
+        emissiveIntensity: 0.32,
         metalness: 0.1,
         roughness: 0.45,
         transparent: true,
-        opacity,
+        opacity: 0.68,
         side: THREE.DoubleSide,
         depthWrite: false,
       });
-      parts.disposables.push(material);
-      parts.brightness.push({ side, layer, material, base: opacity });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.renderOrder = 2;
-      mesh.frustumCulled = false;
-      wing.add(mark(mesh));
-    };
+      parts.disposables.push(ribMaterial);
+      parts.brightness.push({ side, layer: "veinGlow", material: ribMaterial, base: 0.68 });
+      const ribMesh = new THREE.Mesh(ribGeometry, ribMaterial);
+      ribMesh.renderOrder = 2;
+      ribMesh.frustumCulled = false;
+      wing.add(mark(ribMesh));
+    }
 
-    addVeins(spec.main, MAIN_LAYERS, VEIN_DETAIL.main, "#7dd3fc", "#38bdf8", 0.7, 0.85, "veinBright");
-    addVeins(spec.fine, FINE_LAYERS, VEIN_DETAIL.fine, "#38bdf8", "#1d4ed8", 0.35, 0.6, "veinGlow");
+    /* ---- 末端突触：分支尖端的发光点，复用光路粒子那套 CanvasTexture ---- */
+    if (synapses.length) {
+      const positions = new Float32Array(synapses.length * 3);
+      synapses.forEach((point, index) => {
+        positions[index * 3] = point.x;
+        positions[index * 3 + 1] = point.y;
+        positions[index * 3 + 2] = point.z;
+      });
+      const synapseGeometry = new THREE.BufferGeometry();
+      synapseGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      const synapseMaterial = new THREE.PointsMaterial({
+        map: synapseTexture,
+        color: "#e8feff",
+        size: toWorldSize(8.5),
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      parts.disposables.push(synapseGeometry, synapseMaterial);
+      parts.brightness.push({ side, layer: "veinGlow", material: synapseMaterial, base: 0.9 });
+      const synapseCloud = new THREE.Points(synapseGeometry, synapseMaterial);
+      synapseCloud.renderOrder = 2;
+      synapseCloud.frustumCulled = false;
+      wing.add(mark(synapseCloud));
+    }
   }
 }
 

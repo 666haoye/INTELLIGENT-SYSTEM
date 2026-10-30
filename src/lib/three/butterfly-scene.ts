@@ -384,7 +384,9 @@ function buildWing(
     pivot.add(fatSegments(localPolys(inner, origin), material, parts));
   }
 
-  /* .vein-glow 3.4px #1d4ed8 α.09（覆盖全部主脉） */
+  /* .vein-glow 3.4px #1d4ed8 α.09（覆盖全部主脉）
+     以下五层直线脉络标 ecoOnly：旗舰档用神经分形树接管翼面，
+     applyTier 会在旗舰档把它们整批隐藏（见 ButterflyScene.tsx）。 */
   const mainPolys = parsePaths(spec.main);
   {
     const material = register(
@@ -394,7 +396,9 @@ function buildWing(
       "veinGlow",
       0.09,
     );
-    pivot.add(fatSegments(localPolys(mainPolys, origin), material, parts));
+    const layer = fatSegments(localPolys(mainPolys, origin), material, parts);
+    layer.userData.ecoOnly = true;
+    pivot.add(layer);
   }
 
   /* .vein 0.8px #7dd3fc α.6 */
@@ -406,7 +410,9 @@ function buildWing(
       "wingLine",
       0.6,
     );
-    pivot.add(fatSegments(localPolys(mainPolys, origin), material, parts));
+    const layer = fatSegments(localPolys(mainPolys, origin), material, parts);
+    layer.userData.ecoOnly = true;
+    pivot.add(layer);
   }
 
   /* .vein--fine 0.55px α.35 */
@@ -418,7 +424,9 @@ function buildWing(
       "wingLine",
       0.35,
     );
-    pivot.add(fatSegments(localPolys(parsePaths(spec.fine), origin), material, parts));
+    const layer = fatSegments(localPolys(parsePaths(spec.fine), origin), material, parts);
+    layer.userData.ecoOnly = true;
+    pivot.add(layer);
   }
 
   /* .vein--cell 虚线 3/5 α.45 */
@@ -444,7 +452,9 @@ function buildWing(
       "veinBright",
       0.75,
     );
-    pivot.add(fatSegments(localPolys(parsePaths(spec.bright), origin), material, parts));
+    const layer = fatSegments(localPolys(parsePaths(spec.bright), origin), material, parts);
+    layer.userData.ecoOnly = true;
+    pivot.add(layer);
   }
 
   /* .wing-currents 1px #e0fcff α.38，虚线 2/14 */
@@ -456,9 +466,13 @@ function buildWing(
       "veinBright",
       0.38,
     );
-    pivot.add(
-      fatSegments(localPairs(dashPairs(parsePaths(spec.currents), 2, 14), origin), material, parts),
+    const layer = fatSegments(
+      localPairs(dashPairs(parsePaths(spec.currents), 2, 14), origin),
+      material,
+      parts,
     );
+    layer.userData.ecoOnly = true;
+    pivot.add(layer);
   }
 
   /* .wing-sparks：贴在翼面上，必须随翼转，所以也挂在 pivot 下 */

@@ -168,6 +168,30 @@ idle ──hover──▶ hover ──click──▶ locking ──(settle + 1.3
 一帧一帧与环同步。宝珠就位于环心，因此它同时是：光路终点、热区球心、标签锚点、相机聚焦目标
 —— 四个消费者共用同一个点。
 
+## 3c. 翼面神经分形树（旗舰档）
+
+参考图要求"分形神经突触"质感，所以旗舰档的翼脉不再是从翼根放射的等粗直管：
+
+| 层 | 构造 | 半径（世界单位） | 视觉 |
+|---|---|---|---|
+| 主神经 | `NODE_VEIN` 主脉路径（根→尖）→ CatmullRom → `taperedTube` 36×6，独立 mesh | **0.021 → 0.007** | 根粗梢细，是最亮的一根（`veinBright`，α0.90） |
+| 肋脉 | 其余主脉的**首/中/尾三条**，同样变径 | 0.0065 → 0.0035 | 骨架（`veinGlow`，α0.68），不再保留 5~6 条 |
+| 一级分支 | 沿主干/肋脉每 12 设计像素一个锚点，切线两侧交替偏 **18°~30°**，长度 = 剩余干长×38%~63%（上限 0.85） | 0.006 → 0.0026 | 与肋脉合并成一个 geometry（每翼 1 draw call） |
+| 二级 twig | 每条分支末端 1~2 根，方向再偏 22°~42°，长度 = 分支×42%~62% | 0.0026 → 0.0011 | 同上 |
+| 末端突触 | twig 尖端铺 `Points`，四翼共用一张 `createFlowDot()` 贴图（整次 build 只创建一次） | 8.5 设计像素 | additive 白点，α0.90（`veinGlow`） |
+
+- **左右不镜像**：四翼各用固定种子（`nerveSeed`），pivot 的 `scale.x=-1` 只负责放置；
+  生成端不做 flip，所以左右分叉形态天然不同（实测左右前翅的分叉位置与数量都不同）。
+- **不戳出翼膜**：分支端点用翼轮廓多边形做射线法判定，落在轮廓外直接丢弃。
+- **节点环留白**：主干最后 20%、肋脉最后 12% 不长分支，宝珠与标签区域保持干净。
+- **主干隔离**：mesh 命名 `nerve-trunk-<quadrant>`、`userData.nerveTrunk = true`，
+  后续阶段的"点亮 / 粒子流"只操作它；本阶段只注册 `veinBright`，吃 hover / conduct 提亮。
+- **eco 直线层在旗舰档收起**：`.vein-glow / .vein / .vein--fine / .vein--bright / .wing-currents`
+  五层 fat-line 打 `userData.ecoOnly`，`applyTier` 在旗舰档整批隐藏（eco 档原样保留）。
+  翼轮廓辉光、内轮廓、虚线 cell、sparks 仍保留 —— 直线主脉与细脉正是"荧光棒 / 雨伞"的来源。
+- 分形只在翼局部 XY 平面内生成、z=0；变径管与 `TubeGeometry` 的属性集一致
+  （position / normal / uv + index），可与普通管一起 `mergeGeometries`。
+
 ## 4. 安静模式 / 静态降级（硬锁）
 
 一键执行且**不做过渡**：四翼瞬回正面对称（`fold=0`）、`gate=0`、光路 off、粒子 off，
@@ -179,6 +203,9 @@ idle ──hover──▶ hover ──click──▶ locking ──(settle + 1.3
 路径**复用翅膀上已有的那条神经**，不另造曲线：四个节点各自对应一条从翼根辐射出去的主脉
 （右翼 `FORE_MAIN[1]` / `HIND_MAIN[0]`，左翼是同一套局部坐标、由 pivot 的 `scale.x=-1` 镜像），
 起点取核心在翼局部坐标里的位置，随后直接接入那条主脉。
+
+旗舰档的主神经是同一条 `NODE_VEIN` 路径的变径管（§3c），光路与管壁共用一份根→尖采样；
+改质感只动管的半径曲线，不动路径常量，`pathEnd` 与环心的实测误差仍是 0.0004。
 
 这条设计带来三个必须保持的性质：
 
@@ -279,14 +306,14 @@ resize 走 `ResizeObserver(document.documentElement)` + rAF 合并，在 rAF 里
 
 | 项 | 旗舰档 | 节能档 |
 |---|---|---|
-| draw call | 静态 **126** ≤ 136 · hover 129 ≤ 140 · 激活+光路 **129** ≤ 142 | **96** ≤ 110 |
-| 三角形 | 实测 **100,728** ≤ 120k | **57,438** |
+| draw call | 静态 **110** ≤ 136 · hover 113 ≤ 140 · 激活+光路 **113** ≤ 142 | **96** ≤ 110 |
+| 三角形 | 实测 **80,712** ≤ 120k | **57,438** |
 | 粒子 | 光路 6 个 + **深空层 2600 星点**（独立 renderer，不占这本账，见 §5b） | 光路 6 个 + 深空层 1800 星点 |
 | 后处理 | 阶段二才接 EffectComposer + UnrealBloom + RGBShift | 无 |
 
-静态 126 / 三角形 100,728 / 节能档 96 · 57,438 都是 `__zjButterfly.stats()` 的**实测值**；hover 与激活两档是「静态实测 + 环/光路的已知增量」推算值，改环或改光路时要重新实测。`setTier('eco') ↔ setTier('flagship')` 往返三轮后 `geometries` 恒为 97、`textures` 恒为 7 ⇒ 降档不重建几何、不泄漏。
+静态 110 / 三角形 80,712 / 节能档 96 · 57,438 都是 `__zjButterfly.stats()` 的**实测值**；激活+光路 113 是锁定态实测（含光路 2 条线与 1 个粒子 Points），hover 与它同量级。`setTier('eco') ↔ setTier('flagship')` 往返三轮后 `geometries` 恒为 **101**、`textures` 恒为 **8** ⇒ 降档不重建几何、不泄漏（数字在全部资源上传完成后测得；刚挂载时只统计已上传的部分）。
 
-账目变动（相对上一版）：**删掉深空穹顶** —— `SphereGeometry(58,24,12)` 是 1 个 draw call，两极各退化 24 个三角形所以是 `24×12×2 − 48 =` **528** 个三角形（不是 576）。实测正是 127→126、101,256→100,728。穹顶原本 `renderOrder=0` 且不写深度，删掉不影响任何其它对象的绘制顺序；`applyTier` 的 traverse 只"命中 `flagshipOnly` 就设 visible"，不数数量也不依赖顺序，少一个对象无副作用。
+账目变动（相对上一版）：**翼脉从直管改为分形神经树** —— 每翼删掉细脉 Tube 层（两层）与主脉三层视差，换成「主干 + 肋脉/分支合并 + 突触 Points」三件；旗舰档同时收起 eco 的五层直线脉络（−20 draw call）。实测 126→110 draw call、100,728→80,712 三角形、`geometries` 97→101（每翼多 1 个合并几何）、`textures` 7→8（四翼共享一张突触贴图）。更早删深空穹顶的账（127→126、101,256→100,728）已被本次改动覆盖。
 
 深空背景层是**另一个 renderer**，实测 `drawCalls` **恒为 1**（只有星空那一个 `Points`）、`geometries: 1`、`textures: 0`（纯 procedural shader，一张贴图都不引，`file://` 单文件导出照旧可用）。它的账不进上面这本 —— 两本账分开看，`__zjButterfly.stats()` 与 `__zjSpace.stats()` 各读各的。星点点亮面积实测占全屏 **0.53%（1600×670）~ 1.26%（390×844）**，随视口面积反比变化，fill rate 可忽略；真正的固定成本是每帧一次全屏 opaque clear，这才是 DPR 上限压到 1.5 的理由。
 
@@ -297,6 +324,11 @@ resize 走 `ResizeObserver(document.documentElement)` + rAF 合并，在 rAF 里
 - `tempo` 是**乘数**：1.65（安静模式）= 更慢。`wingClock += dt × gate / tempo`，别写成乘。
 - `--glow` 只作用于核心 aura / beam，不影响翼的线框亮度。
 - 材质一律 `side: DoubleSide`：左翼靠负缩放镜像，`FrontSide` 会把整片背面剔掉。
+- 分形树的种子按象限固定（`nerveSeed`），左右翼刻意不同 —— 别为了"对称"把四翼改成同一个种子。
+- 变径管 `taperedTube` 的属性集必须与 `TubeGeometry` 一致（position / normal / uv + index），
+  才能和肋脉、分支一起 `mergeGeometries`；`Points` 几何绝不能混进合并。
+- eco 的直线脉络层靠 `userData.ecoOnly` 在旗舰档隐藏；新增翼面直线层时记得打标，
+  否则又会回到"直线雨伞"。
 - 发光贴图全部用 `CanvasTexture` 现场生成，禁止外部图片（单文件离线版要 `file://` 直开）。
 - **绕 Y 轴的旋转在 `scale.x = -1` 下会变号**，所以"左右同角速度"实际是一前一后。
   两翼协同要符号相反（§1），触须反向摆动（§1b）也是同一条数学。
